@@ -25,10 +25,10 @@ APP_CONFIG = {
     "APP_ICON": "🏭",
     
     # إعدادات GitHub
-    "REPO_NAME": "mahmedabdallh123/COTTON_PRESS",  # غيّر هذا لريبو الجديد
+    "REPO_NAME": "mahmedabdallh123/luva",  # غيّر هذا لريبو الجديد
     "BRANCH": "main",
-    "FILE_PATH": "Cotton_Press_Data.xlsx",  # ملف البيانات الجديد
-    "LOCAL_FILE": "Cotton_Press_Data.xlsx",
+    "FILE_PATH": "luva.xlsx",  # ملف البيانات الجديد
+    "LOCAL_FILE": "luva.xlsx",
     
     # إعدادات الأمان
     "MAX_ACTIVE_USERS": 5,
