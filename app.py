@@ -25,9 +25,9 @@ APP_CONFIG = {
     "APP_ICON": "🏭",
     
     # إعدادات GitHub
-    "REPO_NAME": "mahmedabdallh123/COTTON_PRESS",  # غيّر هذا لريبو الجديد
+    "REPO_NAME": "mahmedabdallh123/COTTON_PRESS",
     "BRANCH": "main",
-    "FILE_PATH": "Cotton_Press_Data.xlsx",  # ملف البيانات الجديد
+    "FILE_PATH": "Cotton_Press_Data.xlsx",
     "LOCAL_FILE": "Cotton_Press_Data.xlsx",
     
     # إعدادات الأمان
@@ -63,22 +63,25 @@ GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/
 def load_users():
     """تحميل بيانات المستخدمين من ملف JSON"""
     if not os.path.exists(USERS_FILE):
-        # إنشاء مستخدمين افتراضيين: admin, editor, viewer
+        # إنشاء مستخدمين افتراضيين
         default_users = {
             "admin": {
                 "password": "admin123", 
                 "role": "admin", 
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "full_name": "المسؤول الرئيسي"
             },
             "editor": {
                 "password": "editor123", 
                 "role": "editor", 
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "full_name": "مستخدم التحرير"
             },
             "viewer": {
                 "password": "viewer123", 
                 "role": "viewer", 
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "full_name": "مستخدم العرض"
             }
         }
         with open(USERS_FILE, "w", encoding="utf-8") as f:
@@ -86,10 +89,27 @@ def load_users():
         return default_users
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            users = json.load(f)
+            # التأكد من وجود جميع الحقول المطلوبة لكل مستخدم
+            for username, user_data in users.items():
+                if "role" not in user_data:
+                    user_data["role"] = "viewer"  # قيمة افتراضية
+                if "created_at" not in user_data:
+                    user_data["created_at"] = datetime.now().isoformat()
+                if "full_name" not in user_data:
+                    user_data["full_name"] = username
+            return users
     except Exception as e:
         st.error(f"❌ خطأ في ملف users.json: {e}")
-        return {"admin": {"password": "admin", "role": "admin", "created_at": datetime.now().isoformat()}}
+        # إرجاع مستخدمين افتراضيين في حالة الخطأ
+        return {
+            "admin": {
+                "password": "admin123", 
+                "role": "admin", 
+                "created_at": datetime.now().isoformat(),
+                "full_name": "المسؤول الرئيسي"
+            }
+        }
 
 def save_users(users):
     """حفظ بيانات المستخدمين إلى ملف JSON"""
@@ -161,7 +181,11 @@ def logout_action():
         save_state(state)
     keys = list(st.session_state.keys())
     for k in keys:
-        st.session_state.pop(k, None)
+        if k not in ["logged_in", "username", "user_role"]:  # نحتفظ ببعض الحالات
+            st.session_state.pop(k, None)
+    st.session_state.logged_in = False
+    st.session_state.username = None
+    st.session_state.user_role = None
     st.rerun()
 
 # -------------------------------
@@ -170,6 +194,8 @@ def logout_action():
 def login_ui():
     users = load_users()
     state = cleanup_sessions(load_state())
+    
+    # تهيئة حالة الجلسة
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.username = None
@@ -195,13 +221,22 @@ def login_ui():
                 elif active_count >= MAX_ACTIVE_USERS:
                     st.error("🚫 الحد الأقصى للمستخدمين المتصلين حالياً.")
                     return False
+                
+                # حفظ حالة تسجيل الدخول
                 state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
                 save_state(state)
-                st.session_state.logged_in = True
-                st.session_state.username = username_input
-                st.session_state.user_role = users[username_input]["role"]
-                st.success(f"✅ تم تسجيل الدخول: {username_input} ({st.session_state.user_role})")
-                st.rerun()
+                
+                # تحديث حالة الجلسة - مع معالجة الخطأ
+                try:
+                    user_role = users[username_input].get("role", "viewer")
+                    st.session_state.logged_in = True
+                    st.session_state.username = username_input
+                    st.session_state.user_role = user_role
+                    st.success(f"✅ تم تسجيل الدخول: {username_input} ({user_role})")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ خطأ في تحميل بيانات المستخدم: {e}")
+                    return False
             else:
                 st.error("❌ كلمة المرور غير صحيحة.")
         return False
@@ -285,7 +320,6 @@ def load_cotton_data():
 def create_new_cotton_file():
     """إنشاء ملف بيانات جديد"""
     try:
-        # تعريف الأعمدة بناءً على الصورة المرفقة
         columns = [
             'التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 
             'وزن البالة', 'ملاحظات'
@@ -357,7 +391,7 @@ def get_current_shift():
     for shift_name, shift_times in APP_CONFIG["SHIFTS"].items():
         if shift_times["start"] <= current_hour < shift_times["end"]:
             return shift_name
-    return "ثالث"  # الوردية الثالثة من منتصف الليل إلى 8 صباحاً
+    return "ثالث"
 
 def get_supervisors():
     """قائمة المشرفين المحدثة"""
@@ -450,7 +484,7 @@ st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
 # شريط تسجيل الدخول
 with st.sidebar:
     st.header("👤 الجلسة")
-    if not st.session_state.get("logged_in"):
+    if not st.session_state.get("logged_in", False):
         if not login_ui():
             st.stop()
     else:
@@ -489,7 +523,7 @@ st.title(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
 
 # التحقق من الصلاحيات
 username = st.session_state.get("username")
-user_role = st.session_state.get("user_role")
+user_role = st.session_state.get("user_role", "viewer")  # قيمة افتراضية
 permissions = get_user_permissions(user_role)
 
 # تحديد التبويبات بناءً على الصلاحيات
@@ -617,7 +651,7 @@ if permissions["can_see_stats"]:
 # -------------------------------
 # Tab 3: إدارة المستخدمين (للمسؤول فقط)
 # -------------------------------
-if permissions["can_manage_users"]:
+if permissions["can_manage_users"] and len(tabs) > 2:
     with tabs[2]:
         st.header("👥 إدارة المستخدمين")
         
@@ -631,7 +665,8 @@ if permissions["can_manage_users"]:
             for username, info in users.items():
                 user_data.append({
                     "اسم المستخدم": username,
-                    "الدور": info.get("role", "user"),
+                    "الدور": info.get("role", "viewer"),
+                    "الاسم الكامل": info.get("full_name", username),
                     "تاريخ الإنشاء": info.get("created_at", "غير معروف")
                 })
             
@@ -643,13 +678,15 @@ if permissions["can_manage_users"]:
         # إضافة مستخدم جديد
         st.subheader("➕ إضافة مستخدم جديد")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             new_username = st.text_input("اسم المستخدم الجديد:")
         with col2:
             new_password = st.text_input("كلمة المرور:", type="password")
         with col3:
             user_role = st.selectbox("الدور:", ["admin", "editor", "viewer"])
+        with col4:
+            full_name = st.text_input("الاسم الكامل (اختياري):")
         
         if st.button("إضافة مستخدم", key="add_user"):
             if not new_username.strip() or not new_password.strip():
@@ -660,7 +697,8 @@ if permissions["can_manage_users"]:
                 users[new_username] = {
                     "password": new_password,
                     "role": user_role,
-                    "created_at": datetime.now().isoformat()
+                    "created_at": datetime.now().isoformat(),
+                    "full_name": full_name or new_username
                 }
                 if save_users(users):
                     st.success(f"✅ تم إضافة المستخدم '{new_username}' بنجاح.")
