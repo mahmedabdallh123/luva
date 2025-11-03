@@ -71,13 +71,13 @@ def load_users():
                 "created_at": datetime.now().isoformat(),
                 "permissions": ["all"]
             },
-            "المشرف": {
+            "user1": {
                 "password": "12345", 
                 "role": "data_entry", 
                 "created_at": datetime.now().isoformat(),
                 "permissions": ["data_entry"]
             },
-            "المدير": {
+            "user2": {
                 "password": "99999", 
                 "role": "viewer", 
                 "created_at": datetime.now().isoformat(),
