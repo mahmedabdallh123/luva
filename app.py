@@ -36,9 +36,9 @@ APP_CONFIG = {
     
     # إعدادات الورديات
     "SHIFTS": {
-        "أول": {"start": 8, "end": 16},
-        "ثاني": {"start": 16, "end": 24},
-        "ثالث": {"start": 0, "end": 8}
+        "الاولي": {"start": 8, "end": 16},
+        "الثانيه": {"start": 16, "end": 24},
+        "الثالثه": {"start": 0, "end": 8}
     },
     
     # إعدادات الواجهة
@@ -71,13 +71,13 @@ def load_users():
                 "created_at": datetime.now().isoformat(),
                 "permissions": ["all"]
             },
-            "user1": {
+            "المشرف": {
                 "password": "12345", 
                 "role": "data_entry", 
                 "created_at": datetime.now().isoformat(),
                 "permissions": ["data_entry"]
             },
-            "user2": {
+            "المدير": {
                 "password": "99999", 
                 "role": "viewer", 
                 "created_at": datetime.now().isoformat(),
