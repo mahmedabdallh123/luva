@@ -1,6 +1,6 @@
 {
     "admin": {"password": "0000"},
-    "المشرف": {"password": "12345"},
-    "المدير": {"password": "99999"}
+    "user1": {"password": "12345"},
+    "user2": {"password": "99999"}
 }
 
