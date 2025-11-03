@@ -17,7 +17,7 @@ except Exception:
     GITHUB_AVAILABLE = False
 
 # ===============================
-# ⚙️ إعدادات التطبيق - نظام مكبس القطن
+# ⚙ إعدادات التطبيق - نظام مكبس القطن
 # ===============================
 APP_CONFIG = {
     # إعدادات التطبيق العامة
@@ -25,9 +25,9 @@ APP_CONFIG = {
     "APP_ICON": "🏭",
     
     # إعدادات GitHub
-    "REPO_NAME": "mahmedabdallh123/COTTON_PRESS",
+    "REPO_NAME": "mahmedabdallh123/COTTON_PRESS",  # غيّر هذا لريبو الجديد
     "BRANCH": "main",
-    "FILE_PATH": "Cotton_Press_Data.xlsx",
+    "FILE_PATH": "Cotton_Press_Data.xlsx",  # ملف البيانات الجديد
     "LOCAL_FILE": "Cotton_Press_Data.xlsx",
     
     # إعدادات الأمان
@@ -63,53 +63,16 @@ GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/
 def load_users():
     """تحميل بيانات المستخدمين من ملف JSON"""
     if not os.path.exists(USERS_FILE):
-        # إنشاء مستخدمين افتراضيين
-        default_users = {
-            "admin": {
-                "password": "admin123", 
-                "role": "admin", 
-                "created_at": datetime.now().isoformat(),
-                "full_name": "المسؤول الرئيسي"
-            },
-            "editor": {
-                "password": "editor123", 
-                "role": "editor", 
-                "created_at": datetime.now().isoformat(),
-                "full_name": "مستخدم التحرير"
-            },
-            "viewer": {
-                "password": "viewer123", 
-                "role": "viewer", 
-                "created_at": datetime.now().isoformat(),
-                "full_name": "مستخدم العرض"
-            }
-        }
+        default = {"admin": {"password": "admin", "role": "admin", "created_at": datetime.now().isoformat()}}
         with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_users, f, indent=4, ensure_ascii=False)
-        return default_users
+            json.dump(default, f, indent=4, ensure_ascii=False)
+        return default
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = json.load(f)
-            # التأكد من وجود جميع الحقول المطلوبة لكل مستخدم
-            for username, user_data in users.items():
-                if "role" not in user_data:
-                    user_data["role"] = "viewer"  # قيمة افتراضية
-                if "created_at" not in user_data:
-                    user_data["created_at"] = datetime.now().isoformat()
-                if "full_name" not in user_data:
-                    user_data["full_name"] = username
-            return users
+            return json.load(f)
     except Exception as e:
         st.error(f"❌ خطأ في ملف users.json: {e}")
-        # إرجاع مستخدمين افتراضيين في حالة الخطأ
-        return {
-            "admin": {
-                "password": "admin123", 
-                "role": "admin", 
-                "created_at": datetime.now().isoformat(),
-                "full_name": "المسؤول الرئيسي"
-            }
-        }
+        return {"admin": {"password": "admin", "role": "admin", "created_at": datetime.now().isoformat()}}
 
 def save_users(users):
     """حفظ بيانات المستخدمين إلى ملف JSON"""
@@ -181,11 +144,7 @@ def logout_action():
         save_state(state)
     keys = list(st.session_state.keys())
     for k in keys:
-        if k not in ["logged_in", "username", "user_role"]:  # نحتفظ ببعض الحالات
-            st.session_state.pop(k, None)
-    st.session_state.logged_in = False
-    st.session_state.username = None
-    st.session_state.user_role = None
+        st.session_state.pop(k, None)
     st.rerun()
 
 # -------------------------------
@@ -194,12 +153,9 @@ def logout_action():
 def login_ui():
     users = load_users()
     state = cleanup_sessions(load_state())
-    
-    # تهيئة حالة الجلسة
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.username = None
-        st.session_state.user_role = None
 
     st.title(f"{APP_CONFIG['APP_ICON']} تسجيل الدخول - {APP_CONFIG['APP_TITLE']}")
 
@@ -221,29 +177,18 @@ def login_ui():
                 elif active_count >= MAX_ACTIVE_USERS:
                     st.error("🚫 الحد الأقصى للمستخدمين المتصلين حالياً.")
                     return False
-                
-                # حفظ حالة تسجيل الدخول
                 state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
                 save_state(state)
-                
-                # تحديث حالة الجلسة - مع معالجة الخطأ
-                try:
-                    user_role = users[username_input].get("role", "viewer")
-                    st.session_state.logged_in = True
-                    st.session_state.username = username_input
-                    st.session_state.user_role = user_role
-                    st.success(f"✅ تم تسجيل الدخول: {username_input} ({user_role})")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ خطأ في تحميل بيانات المستخدم: {e}")
-                    return False
+                st.session_state.logged_in = True
+                st.session_state.username = username_input
+                st.success(f"✅ تم تسجيل الدخول: {username_input}")
+                st.rerun()
             else:
                 st.error("❌ كلمة المرور غير صحيحة.")
         return False
     else:
         username = st.session_state.username
-        user_role = st.session_state.user_role
-        st.success(f"✅ مسجل الدخول كـ: {username} ({user_role})")
+        st.success(f"✅ مسجل الدخول كـ: {username}")
         rem = remaining_time(state, username)
         if rem:
             mins, secs = divmod(int(rem.total_seconds()), 60)
@@ -320,6 +265,7 @@ def load_cotton_data():
 def create_new_cotton_file():
     """إنشاء ملف بيانات جديد"""
     try:
+        # تعريف الأعمدة بناءً على الصورة المرفقة
         columns = [
             'التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 
             'وزن البالة', 'ملاحظات'
@@ -391,18 +337,17 @@ def get_current_shift():
     for shift_name, shift_times in APP_CONFIG["SHIFTS"].items():
         if shift_times["start"] <= current_hour < shift_times["end"]:
             return shift_name
-    return "ثالث"
+    return "ثالث"  # الوردية الثالثة من منتصف الليل إلى 8 صباحاً
 
 def get_supervisors():
-    """قائمة المشرفين المحدثة"""
+    """قائمة المشرفين"""
     return ["انسT.A", "عبدالحميدT.B", "محمود فتحيT.C", "احمد عبالعزيزT.D"]
 
 def get_bale_types():
-    """أنواع البالات المحدثة"""
-    return [
-        "قماش", "تراب", "هبوه دست", "اسطبات تدویر", "برم", "برم انفاق", "بلاستيك",
+    """أنواع البالات"""
+    return ["قماش", "تراب", "هبوه دست", "اسطبات تدویر", "برم", "برم انفاق", "بلاستيك",
         "هبوه تنظيف", "انفاق", "شرق الغزل", "تمشيط غير مغلف", 
-        "تمشيط مغلف", "مكس", "كرد", "قطن خام"
+        "تمشيط مغلف", "مكس", "كرد", "قطن خام","ملح"
     ]
 
 def add_new_record(df, supervisor, bale_type, weight, notes=""):
@@ -448,33 +393,6 @@ def generate_statistics(df, start_date, end_date):
     
     return stats
 
-def get_user_permissions(user_role):
-    """الحصول على صلاحيات المستخدم بناءً على الدور"""
-    permissions = {
-        "admin": {
-            "can_view": True,
-            "can_edit": True,
-            "can_input": True,
-            "can_manage_users": True,
-            "can_see_stats": True
-        },
-        "editor": {
-            "can_view": True,
-            "can_edit": True,
-            "can_input": True,
-            "can_manage_users": False,
-            "can_see_stats": True
-        },
-        "viewer": {
-            "can_view": True,
-            "can_edit": False,
-            "can_input": False,
-            "can_manage_users": False,
-            "can_see_stats": True
-        }
-    }
-    return permissions.get(user_role, permissions["viewer"])
-
 # -------------------------------
 # 🖥 الواجهة الرئيسية
 # -------------------------------
@@ -484,36 +402,35 @@ st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
 # شريط تسجيل الدخول
 with st.sidebar:
     st.header("👤 الجلسة")
-    if not st.session_state.get("logged_in", False):
+    if not st.session_state.get("logged_in"):
         if not login_ui():
             st.stop()
     else:
         state = cleanup_sessions(load_state())
         username = st.session_state.username
-        user_role = st.session_state.user_role
         rem = remaining_time(state, username)
         if rem:
             mins, secs = divmod(int(rem.total_seconds()), 60)
-            st.success(f"👋 {username} | الدور: {user_role} | ⏳ {mins:02d}:{secs:02d}")
+            st.success(f"👋 {username} | ⏳ {mins:02d}:{secs:02d}")
         else:
             logout_action()
 
-        st.markdown("---")
-        st.write("🔧 أدوات:")
-        if st.button("🔄 تحديث الملف من GitHub"):
-            if fetch_from_github_requests():
-                st.rerun()
-        
-        if st.button("🗑 مسح الكاش"):
-            try:
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ خطأ في مسح الكاش: {e}")
-        
-        st.markdown("---")
-        if st.button("🚪 تسجيل الخروج"):
-            logout_action()
+    st.markdown("---")
+    st.write("🔧 أدوات:")
+    if st.button("🔄 تحديث الملف من GitHub"):
+        if fetch_from_github_requests():
+            st.rerun()
+    
+    if st.button("🗑 مسح الكاش"):
+        try:
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ خطأ في مسح الكاش: {e}")
+    
+    st.markdown("---")
+    if st.button("🚪 تسجيل الخروج"):
+        logout_action()
 
 # تحميل البيانات
 cotton_df = load_cotton_data()
@@ -523,135 +440,126 @@ st.title(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
 
 # التحقق من الصلاحيات
 username = st.session_state.get("username")
-user_role = st.session_state.get("user_role", "viewer")  # قيمة افتراضية
-permissions = get_user_permissions(user_role)
+is_admin = username == "admin"
 
-# تحديد التبويبات بناءً على الصلاحيات
-if permissions["can_manage_users"]:  # admin
+# تحديد التبويبات
+if is_admin:
     tabs = st.tabs(APP_CONFIG["CUSTOM_TABS"])
-elif permissions["can_input"]:  # editor
-    tabs = st.tabs(["📥 إدخال البيانات", "📊 عرض الإحصائيات", "📞 الدعم الفني"])
-else:  # viewer
-    tabs = st.tabs(["📊 عرض الإحصائيات", "📞 الدعم الفني"])
+else:
+    tabs = st.tabs(["📥 إدخال البيانات", "📊 عرض الإحصائيات"])
 
 # -------------------------------
-# Tab 1: إدخال البيانات (للمحررين والمسؤولين فقط)
+# Tab 1: إدخال البيانات
 # -------------------------------
-if permissions["can_input"]:
-    with tabs[0]:
-        st.header("📥 إدخال بيانات البالات")
-        
-        # معلومات الوردية الحالية
-        current_shift = get_current_shift()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        st.info(f"**الوردية الحالية:** {current_shift} | **الوقت:** {current_time}")
-        
-        # نموذج إدخال البيانات
-        with st.form("data_entry_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                supervisor = st.selectbox("👨‍💼 اختر المشرف:", get_supervisors(), key="supervisor_select")
-                bale_type = st.selectbox("📦 اختر نوع البالة:", get_bale_types(), key="bale_type_select")
-            
-            with col2:
-                weight = st.number_input("⚖️ وزن البالة (كجم):", min_value=0.0, step=0.1, key="weight_input")
-                notes = st.text_input("📝 ملاحظات (اختياري):", key="notes_input")
-            
-            submitted = st.form_submit_button("💾 حفظ البيانات")
-            
-            if submitted:
-                if weight <= 0:
-                    st.error("❌ يرجى إدخال وزن صحيح للبالة")
-                else:
-                    new_record, updated_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
-                    
-                    # حفظ البيانات
-                    if save_cotton_data(updated_df, f"إضافة بالة {bale_type} بواسطة {supervisor}"):
-                        st.success(f"✅ تم حفظ بيانات البالة بنجاح!")
-                        st.json({
-                            "نوع البالة": new_record['نوع البالة'],
-                            "الوزن": f"{new_record['وزن البالة']} كجم",
-                            "المشرف": new_record['المشرف'],
-                            "الوردية": new_record['الوردية'],
-                            "الوقت": str(new_record['الوقت'])
-                        })
-                        st.rerun()
-
-# -------------------------------
-# Tab 2: عرض الإحصائيات (لجميع المستخدمين)
-# -------------------------------
-if permissions["can_see_stats"]:
-    # تحديد الفهرس الصحيح للتبويب
-    stats_tab_index = 1 if (permissions["can_input"] and not permissions["can_manage_users"]) else 0
+with tabs[0]:
+    st.header("📥 إدخال بيانات البالات")
     
-    with tabs[stats_tab_index]:
-        st.header("📊 عرض الإحصائيات")
+    # معلومات الوردية الحالية
+    current_shift = get_current_shift()
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    st.info(f"*الوردية الحالية:* {current_shift} | *الوقت:* {current_time}")
+    
+    # نموذج إدخال البيانات
+    with st.form("data_entry_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
         
-        if cotton_df.empty:
-            st.warning("⚠ لا توجد بيانات لعرضها")
-        else:
-            # تحديد الفترة الزمنية
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("من تاريخ:", value=datetime.now().date() - timedelta(days=7))
-            with col2:
-                end_date = st.date_input("إلى تاريخ:", value=datetime.now().date())
-            
-            if st.button("🔄 تحديث الإحصائيات"):
-                st.session_state["show_stats"] = True
-            
-            if st.session_state.get("show_stats", False):
-                # توليد وعرض الإحصائيات
-                stats_df = generate_statistics(cotton_df, start_date, end_date)
+        with col1:
+            supervisor = st.selectbox("👨‍💼 اختر المشرف:", get_supervisors(), key="supervisor_select")
+            bale_type = st.selectbox("📦 اختر نوع البالة:", get_bale_types(), key="bale_type_select")
+        
+        with col2:
+            weight = st.number_input("⚖ وزن البالة (كجم):", min_value=0.0, step=0.1, key="weight_input")
+            notes = st.text_input("📝 ملاحظات (اختياري):", key="notes_input")
+        
+        submitted = st.form_submit_button("💾 حفظ البيانات")
+        
+        if submitted:
+            if weight <= 0:
+                st.error("❌ يرجى إدخال وزن صحيح للبالة")
+            else:
+                new_record, updated_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
                 
-                if not stats_df.empty:
-                    st.subheader(f"📈 إحصائيات الفترة من {start_date} إلى {end_date}")
-                    
-                    # عرض جدول الإحصائيات
-                    st.dataframe(stats_df, use_container_width=True)
-                    
-                    # إجماليات عامة
-                    total_bales = stats_df['عدد البالات'].sum()
-                    total_weight = stats_df['إجمالي الوزن'].sum()
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("🔄 إجمالي عدد البالات", f"{total_bales:,}")
-                    with col2:
-                        st.metric("⚖️ إجمالي الوزن", f"{total_weight:,.1f} كجم")
-                    with col3:
-                        avg_weight = total_weight / total_bales if total_bales > 0 else 0
-                        st.metric("📊 متوسط الوزن للبالة", f"{avg_weight:.1f} كجم")
-                    
-                    # عرض البيانات الخام
-                    st.subheader("📋 البيانات التفصيلية")
-                    filtered_data = cotton_df[
-                        (pd.to_datetime(cotton_df['التاريخ']).dt.date >= start_date) & 
-                        (pd.to_datetime(cotton_df['التاريخ']).dt.date <= end_date)
-                    ]
-                    st.dataframe(filtered_data, use_container_width=True)
-                    
-                    # خيارات التصدير
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
-                        filtered_data.to_excel(writer, sheet_name='البيانات_التفصيلية', index=False)
-                    
-                    st.download_button(
-                        label="📥 تحميل التقرير كملف Excel",
-                        data=buffer.getvalue(),
-                        file_name=f"تقرير_مكبس_القطن_{start_date}_إلى_{end_date}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("⚠ لا توجد بيانات في الفترة المحددة")
+                # حفظ البيانات
+                if save_cotton_data(updated_df, f"إضافة بالة {bale_type} بواسطة {supervisor}"):
+                    st.success(f"✅ تم حفظ بيانات البالة بنجاح!")
+                    st.json({
+                        "نوع البالة": new_record['نوع البالة'],
+                        "الوزن": f"{new_record['وزن البالة']} كجم",
+                        "المشرف": new_record['المشرف'],
+                        "الوردية": new_record['الوردية'],
+                        "الوقت": str(new_record['الوقت'])
+                    })
+                    st.rerun()
+
+# -------------------------------
+# Tab 2: عرض الإحصائيات
+# -------------------------------
+with tabs[1]:
+    st.header("📊 عرض الإحصائيات")
+    
+    if cotton_df.empty:
+        st.warning("⚠ لا توجد بيانات لعرضها")
+    else:
+        # تحديد الفترة الزمنية
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("من تاريخ:", value=datetime.now().date() - timedelta(days=7))
+        with col2:
+            end_date = st.date_input("إلى تاريخ:", value=datetime.now().date())
+        
+        if st.button("🔄 تحديث الإحصائيات"):
+            st.session_state["show_stats"] = True
+        
+        if st.session_state.get("show_stats", False):
+            # توليد وعرض الإحصائيات
+            stats_df = generate_statistics(cotton_df, start_date, end_date)
+            
+            if not stats_df.empty:
+                st.subheader(f"📈 إحصائيات الفترة من {start_date} إلى {end_date}")
+                
+                # عرض جدول الإحصائيات
+                st.dataframe(stats_df, use_container_width=True)
+                
+                # إجماليات عامة
+                total_bales = stats_df['عدد البالات'].sum()
+                total_weight = stats_df['إجمالي الوزن'].sum()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("🔄 إجمالي عدد البالات", f"{total_bales:,}")
+                with col2:
+                    st.metric("⚖ إجمالي الوزن", f"{total_weight:,.1f} كجم")
+                with col3:
+                    st.metric("📊 متوسط الوزن للبالة", f"{(total_weight/total_bales):.1f} كجم")
+                
+                # عرض البيانات الخام
+                st.subheader("📋 البيانات التفصيلية")
+                filtered_data = cotton_df[
+                    (pd.to_datetime(cotton_df['التاريخ']).dt.date >= start_date) & 
+                    (pd.to_datetime(cotton_df['التاريخ']).dt.date <= end_date)
+                ]
+                st.dataframe(filtered_data, use_container_width=True)
+                
+                # خيارات التصدير
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
+                    filtered_data.to_excel(writer, sheet_name='البيانات_التفصيلية', index=False)
+                
+                st.download_button(
+                    label="📥 تحميل التقرير كملف Excel",
+                    data=buffer.getvalue(),
+                    file_name=f"تقرير_مكبس_القطن_{start_date}إلى{end_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.warning("⚠ لا توجد بيانات في الفترة المحددة")
 
 # -------------------------------
 # Tab 3: إدارة المستخدمين (للمسؤول فقط)
 # -------------------------------
-if permissions["can_manage_users"] and len(tabs) > 2:
+if is_admin and len(tabs) > 2:
     with tabs[2]:
         st.header("👥 إدارة المستخدمين")
         
@@ -665,8 +573,7 @@ if permissions["can_manage_users"] and len(tabs) > 2:
             for username, info in users.items():
                 user_data.append({
                     "اسم المستخدم": username,
-                    "الدور": info.get("role", "viewer"),
-                    "الاسم الكامل": info.get("full_name", username),
+                    "الدور": info.get("role", "user"),
                     "تاريخ الإنشاء": info.get("created_at", "غير معروف")
                 })
             
@@ -678,15 +585,13 @@ if permissions["can_manage_users"] and len(tabs) > 2:
         # إضافة مستخدم جديد
         st.subheader("➕ إضافة مستخدم جديد")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             new_username = st.text_input("اسم المستخدم الجديد:")
         with col2:
             new_password = st.text_input("كلمة المرور:", type="password")
         with col3:
-            user_role = st.selectbox("الدور:", ["admin", "editor", "viewer"])
-        with col4:
-            full_name = st.text_input("الاسم الكامل (اختياري):")
+            user_role = st.selectbox("الدور:", ["user", "admin"])
         
         if st.button("إضافة مستخدم", key="add_user"):
             if not new_username.strip() or not new_password.strip():
@@ -697,8 +602,7 @@ if permissions["can_manage_users"] and len(tabs) > 2:
                 users[new_username] = {
                     "password": new_password,
                     "role": user_role,
-                    "created_at": datetime.now().isoformat(),
-                    "full_name": full_name or new_username
+                    "created_at": datetime.now().isoformat()
                 }
                 if save_users(users):
                     st.success(f"✅ تم إضافة المستخدم '{new_username}' بنجاح.")
@@ -736,61 +640,34 @@ if permissions["can_manage_users"] and len(tabs) > 2:
                             else:
                                 st.error("❌ حدث خطأ أثناء حفظ التغييرات.")
 
-        # إعادة تعيين كلمة المرور
-        st.subheader("🔑 إعادة تعيين كلمة المرور")
-        
-        if len(users) > 0:
-            user_to_reset = st.selectbox(
-                "اختر مستخدم لإعادة تعيين كلمة المرور:",
-                list(users.keys()),
-                key="reset_user_select"
-            )
-            
-            new_password_reset = st.text_input("كلمة المرور الجديدة:", type="password", key="new_password_reset")
-            
-            if st.button("إعادة تعيين كلمة المرور", key="reset_password_btn"):
-                if not new_password_reset.strip():
-                    st.warning("⚠ الرجاء إدخال كلمة المرور الجديدة.")
-                else:
-                    users[user_to_reset]["password"] = new_password_reset
-                    if save_users(users):
-                        st.success(f"✅ تم إعادة تعيين كلمة المرور للمستخدم '{user_to_reset}' بنجاح.")
-                        st.rerun()
-                    else:
-                        st.error("❌ حدث خطأ أثناء حفظ التغييرات.")
-
 # -------------------------------
 # Tab 4: الدعم الفني
 # -------------------------------
-# حساب الفهرس الصحيح لتبويب الدعم الفني
-tech_support_tab_index = 2 if permissions["can_input"] and not permissions["can_manage_users"] else (
-    3 if permissions["can_manage_users"] else 1
-)
-
+tech_support_tab_index = 3 if is_admin else 2
 if len(tabs) > tech_support_tab_index:
     with tabs[tech_support_tab_index]:
         st.header("📞 الدعم الفني")
         
         st.markdown("## 🛠 معلومات التطوير والدعم")
-        st.markdown("*تم تطوير هذا التطبيق بواسطة:*")
-        st.markdown("### *م. محمد عبدالله*")
-        st.markdown("### *رئيس قسم الكرد والمحطات*")
-        st.markdown("### *مصنع بيل يارن للغزل*")
+        st.markdown("تم تطوير هذا التطبيق بواسطة:")
+        st.markdown("### م. محمد عبدالله")
+        st.markdown("### رئيس قسم الكرد والمحطات")
+        st.markdown("### مصنع بيل يارن للغزل")
         st.markdown("---")
-        st.markdown("### *معلومات الاتصال:*")
+        st.markdown("### معلومات الاتصال:")
         st.markdown("- 📧 البريد الإلكتروني: m.abdallah@bailyarn.com")
         st.markdown("- 📞 هاتف المصنع: 01000000000")
         st.markdown("- 🏢 الموقع: مصنع بيل يارن للغزل")
         st.markdown("---")
-        st.markdown("### *خدمات الدعم الفني:*")
+        st.markdown("### خدمات الدعم الفني:")
         st.markdown("- 🔧 صيانة وتحديث النظام")
         st.markdown("- 📊 تطوير تقارير إضافية")
         st.markdown("- 🐛 إصلاح الأخطاء والمشكلات")
         st.markdown("- 💡 استشارات فنية وتقنية")
         st.markdown("---")
-        st.markdown("### *إصدار النظام:*")
-        st.markdown("- الإصدار: 2.0")
+        st.markdown("### إصدار النظام:")
+        st.markdown("- الإصدار: 1.0")
         st.markdown("- آخر تحديث: 2024")
         st.markdown("- النظام: نظام إدارة مكبس القطن")
         
-        st.info("*ملاحظة:* في حالة مواجهة أي مشاكل تقنية أو تحتاج إلى إضافة ميزات جديدة، يرجى التواصل مع قسم الدعم الفني.")
+        st.info("ملاحظة: في حالة مواجهة أي مشاكل تقنية أو تحتاج إلى إضافة ميزات جديدة، يرجى التواصل مع قسم الدعم الفني.")
