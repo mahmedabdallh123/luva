@@ -32,7 +32,7 @@ APP_CONFIG = {
     
     # إعدادات الأمان
     "MAX_ACTIVE_USERS": 5,
-    "SESSION_DURATION_MINUTES": 30,
+    "SESSION_DURATION_MINUTES": 1,
     
     # إعدادات الورديات
     "SHIFTS": {
