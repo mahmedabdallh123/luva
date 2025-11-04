@@ -31,8 +31,8 @@ APP_CONFIG = {
     "LOCAL_FILE": "luva.xlsx",
     
     # إعدادات الأمان
-    "MAX_ACTIVE_USERS": 5,
-    "SESSION_DURATION_MINUTES":11,
+    "MAX_ACTIVE_USERS": 3,
+    "SESSION_DURATION_MINUTES": 11,
     
     # إعدادات الورديات
     "SHIFTS": {
@@ -414,7 +414,7 @@ def get_current_shift():
     for shift_name, shift_times in APP_CONFIG["SHIFTS"].items():
         if shift_times["start"] <= current_hour < shift_times["end"]:
             return shift_name
-    return "ثالث"  # الوردية الثالثة من منتصف الليل إلى 8 صباحاً
+    return "الثالثه"  # الوردية الثالثة من منتصف الليل إلى 8 صباحاً
 
 def get_supervisors():
     """قائمة المشرفين"""
@@ -427,13 +427,25 @@ def get_bale_types():
         "تمشيط مغلف", "مكس", "كرد", "قطن خام","ملح"
     ]
 
-def add_new_record(df, supervisor, bale_type, weight, notes=""):
+def add_new_record(df, supervisor, bale_type, weight, notes="", manual_date=None, manual_shift=None):
     """إضافة سجل جديد"""
     now = datetime.now()
+    
+    # تحديد التاريخ والوردية بناءً على الإعدادات
+    if manual_date:
+        record_date = manual_date
+    else:
+        record_date = now.date()
+    
+    if manual_shift:
+        record_shift = manual_shift
+    else:
+        record_shift = get_current_shift()
+    
     new_record = {
-        'التاريخ': now.date(),
+        'التاريخ': record_date,
         'الوقت': now.time(),
-        'الوردية': get_current_shift(),
+        'الوردية': record_shift,
         'المشرف': supervisor,
         'نوع البالة': bale_type,
         'وزن البالة': weight,
@@ -578,6 +590,19 @@ if permissions["can_input"] and len(tabs) > 0:
         
         st.info(f"الوردية الحالية: {current_shift} | الوقت: {current_time}")
         
+        # إعدادات التاريخ والوردية (يدوي أو تلقائي)
+        st.subheader("⚙ إعدادات التاريخ والوردية")
+        
+        col_set1, col_set2 = st.columns(2)
+        
+        with col_set1:
+            use_auto_date = st.checkbox("استخدام التاريخ التلقائي", value=True, 
+                                       help="سيتم استخدام تاريخ الجهاز الحالي تلقائياً")
+        
+        with col_set2:
+            use_auto_shift = st.checkbox("استخدام الوردية التلقائية", value=True,
+                                        help="سيتم استخدام الوردية الحالية تلقائياً")
+        
         # نموذج إدخال البيانات
         with st.form("data_entry_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -585,10 +610,22 @@ if permissions["can_input"] and len(tabs) > 0:
             with col1:
                 supervisor = st.selectbox("👨‍💼 اختر المشرف:", get_supervisors(), key="supervisor_select")
                 bale_type = st.selectbox("📦 اختر نوع البالة:", get_bale_types(), key="bale_type_select")
+                
+                # إظهار حقل التاريخ إذا كان يدوي
+                if not use_auto_date:
+                    manual_date = st.date_input("📅 اختر التاريخ:", value=datetime.now().date())
+                else:
+                    manual_date = None
             
             with col2:
                 weight = st.number_input("⚖ وزن البالة (كجم):", min_value=0.0, step=0.1, key="weight_input")
                 notes = st.text_input("📝 ملاحظات (اختياري):", key="notes_input")
+                
+                # إظهار حقل الوردية إذا كان يدوي
+                if not use_auto_shift:
+                    manual_shift = st.selectbox("🕐 اختر الوردية:", list(APP_CONFIG["SHIFTS"].keys()))
+                else:
+                    manual_shift = None
             
             submitted = st.form_submit_button("💾 حفظ البيانات")
             
@@ -596,16 +633,21 @@ if permissions["can_input"] and len(tabs) > 0:
                 if weight <= 0:
                     st.error("❌ يرجى إدخال وزن صحيح للبالة")
                 else:
-                    new_record, updated_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
+                    new_record, updated_df = add_new_record(
+                        cotton_df, supervisor, bale_type, weight, notes, 
+                        manual_date, manual_shift
+                    )
                     
                     # حفظ البيانات
-                    if save_cotton_data(updated_df, f"إضافة بالة {bale_type} بواسطة {supervisor}"):
+                    commit_msg = f"إضافة بالة {bale_type} وزن {weight} كجم بواسطة {supervisor}"
+                    if save_cotton_data(updated_df, commit_msg):
                         st.success(f"✅ تم حفظ بيانات البالة بنجاح!")
                         st.json({
                             "نوع البالة": new_record['نوع البالة'],
                             "الوزن": f"{new_record['وزن البالة']} كجم",
                             "المشرف": new_record['المشرف'],
                             "الوردية": new_record['الوردية'],
+                            "التاريخ": str(new_record['التاريخ']),
                             "الوقت": str(new_record['الوقت'])
                         })
                         st.rerun()
@@ -797,8 +839,8 @@ if ((permissions["can_manage_users"] and len(tabs) > 3) or
         st.markdown("### مصنع بيل يارن للغزل")
         st.markdown("---")
         st.markdown("### معلومات الاتصال:")
-        st.markdown("- 📧 البريد الإلكتروني: m.abdallah@bailyarn.com")
-        st.markdown("- 📞 هاتف المصنع: 01000000000")
+        st.markdown("- 📧 البريد الإلكتروني: medotatch124@gmail.com")
+        st.markdown("- 📞 هاتف المصنع: 01274424062")
         st.markdown("- 🏢 الموقع: مصنع بيل يارن للغزل")
         st.markdown("---")
         st.markdown("### خدمات الدعم الفني:")
@@ -809,7 +851,7 @@ if ((permissions["can_manage_users"] and len(tabs) > 3) or
         st.markdown("---")
         st.markdown("### إصدار النظام:")
         st.markdown("- الإصدار: 1.0")
-        st.markdown("- آخر تحديث: 2024")
+        st.markdown("- آخر تحديث: 2025")
         st.markdown("- النظام: نظام إدارة مكبس القطن")
         
         st.info("ملاحظة: في حالة مواجهة أي مشاكل تقنية أو تحتاج إلى إضافة ميزات جديدة، يرجى التواصل مع قسم الدعم الفني.")
