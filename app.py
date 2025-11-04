@@ -31,7 +31,7 @@ APP_CONFIG = {
     "LOCAL_FILE": "luva.xlsx",
     
     # إعدادات الأمان
-    "MAX_ACTIVE_USERS": 3,
+    "MAX_ACTIVE_USERS": 5,
     "SESSION_DURATION_MINUTES": 11,
     
     # إعدادات الورديات
@@ -455,8 +455,8 @@ def add_new_record(df, supervisor, bale_type, weight, notes="", manual_date=None
     new_df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
     return new_record, new_df
 
-def generate_statistics(df, start_date, end_date):
-    """توليد إحصائيات الفترة المحددة"""
+def generate_advanced_statistics(df, start_date, end_date, selected_shifts, selected_bale_types, calculate_percentage=False):
+    """توليد إحصائيات متقدمة مع خيارات تصفية متعددة"""
     if df.empty:
         return pd.DataFrame()
     
@@ -466,6 +466,14 @@ def generate_statistics(df, start_date, end_date):
     # تصفية البيانات حسب الفترة
     mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
     filtered_df = df[mask]
+    
+    # تصفية حسب الورديات المختارة
+    if selected_shifts:
+        filtered_df = filtered_df[filtered_df['الوردية'].isin(selected_shifts)]
+    
+    # تصفية حسب أنواع البالات المختارة
+    if selected_bale_types:
+        filtered_df = filtered_df[filtered_df['نوع البالة'].isin(selected_bale_types)]
     
     if filtered_df.empty:
         return pd.DataFrame()
@@ -479,6 +487,24 @@ def generate_statistics(df, start_date, end_date):
     # إعادة تسمية الأعمدة
     stats.columns = ['عدد البالات', 'إجمالي الوزن', 'متوسط الوزن', 'المشرف']
     stats = stats.reset_index()
+    
+    # حساب النسبة المئوية إذا طلب المستخدم
+    if calculate_percentage:
+        # إيجاد وزن قطن الخام
+        cotton_weight = 0
+        cotton_mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
+        if selected_shifts:
+            cotton_mask = cotton_mask & (df['الوردية'].isin(selected_shifts))
+        cotton_data = df[cotton_mask & (df['نوع البالة'] == 'قطن خام')]
+        
+        if not cotton_data.empty:
+            cotton_weight = cotton_data['وزن البالة'].sum()
+        
+        # حساب النسبة المئوية لكل نوع
+        if cotton_weight > 0:
+            stats['النسبة المئوية %'] = ((stats['إجمالي الوزن'] / cotton_weight) * 100).round(2)
+        else:
+            stats['النسبة المئوية %'] = 0
     
     return stats
 
@@ -664,27 +690,72 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
     # التأكد من أن الفهرس ضمن النطاق الصحيح
     if stats_tab_index < len(tabs):
         with tabs[stats_tab_index]:
-            st.header("📊 عرض الإحصائيات")
+            st.header("📊 عرض الإحصائيات المتقدمة")
             
             if cotton_df.empty:
                 st.warning("⚠ لا توجد بيانات لعرضها")
             else:
-                # تحديد الفترة الزمنية
+                # قسم التصفية المتقدمة
+                st.subheader("🔍 تصفية البيانات")
+                
                 col1, col2 = st.columns(2)
+                
                 with col1:
+                    # تحديد الفترة الزمنية
                     start_date = st.date_input("من تاريخ:", value=datetime.now().date() - timedelta(days=7))
-                with col2:
                     end_date = st.date_input("إلى تاريخ:", value=datetime.now().date())
+                    
+                    # اختيار الورديات
+                    st.write("### 🕐 اختيار الورديات:")
+                    all_shifts = st.checkbox("جميع الورديات", value=True, key="all_shifts")
+                    if all_shifts:
+                        selected_shifts = list(APP_CONFIG["SHIFTS"].keys())
+                    else:
+                        selected_shifts = st.multiselect(
+                            "اختر الورديات:",
+                            list(APP_CONFIG["SHIFTS"].keys()),
+                            default=list(APP_CONFIG["SHIFTS"].keys())
+                        )
                 
-                if st.button("🔄 تحديث الإحصائيات"):
-                    st.session_state["show_stats"] = True
+                with col2:
+                    # اختيار أنواع البالات
+                    st.write("### 📦 اختيار أنواع البالات:")
+                    all_bales = st.checkbox("جميع أنواع البالات", value=True, key="all_bales")
+                    if all_bales:
+                        selected_bale_types = get_bale_types()
+                    else:
+                        selected_bale_types = st.multiselect(
+                            "اختر أنواع البالات:",
+                            get_bale_types(),
+                            default=get_bale_types()
+                        )
+                    
+                    # خيارات إضافية
+                    st.write("### ⚙ خيارات إضافية:")
+                    calculate_percentage = st.checkbox(
+                        "حساب النسبة المئوية مقابل قطن خام", 
+                        value=True,
+                        help="سيتم حساب نسبة كل نوع من البالات مقابل إجمالي وزن قطن الخام"
+                    )
                 
-                if st.session_state.get("show_stats", False):
+                if st.button("🔄 توليد الإحصائيات", type="primary"):
                     # توليد وعرض الإحصائيات
-                    stats_df = generate_statistics(cotton_df, start_date, end_date)
+                    stats_df = generate_advanced_statistics(
+                        cotton_df, start_date, end_date, 
+                        selected_shifts, selected_bale_types, 
+                        calculate_percentage
+                    )
                     
                     if not stats_df.empty:
-                        st.subheader(f"📈 إحصائيات الفترة من {start_date} إلى {end_date}")
+                        st.subheader(f"📈 الإحصائيات للفترة من {start_date} إلى {end_date}")
+                        
+                        # عرض معلومات التصفية
+                        st.info(f"""
+                        *معلومات التصفية:*
+                        - الورديات: {', '.join(selected_shifts) if selected_shifts else 'جميع الورديات'}
+                        - أنواع البالات: {len(selected_bale_types)} نوع
+                        - حساب النسبة المئوية: {'نعم' if calculate_percentage else 'لا'}
+                        """)
                         
                         # عرض جدول الإحصائيات
                         st.dataframe(stats_df, use_container_width=True)
@@ -702,19 +773,51 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
                             avg_weight = total_weight / total_bales if total_bales > 0 else 0
                             st.metric("📊 متوسط الوزن للبالة", f"{avg_weight:.1f} كجم")
                         
-                        # عرض البيانات الخام
-                        st.subheader("📋 البيانات التفصيلية")
-                        filtered_data = cotton_df[
-                            (pd.to_datetime(cotton_df['التاريخ']).dt.date >= start_date) & 
-                            (pd.to_datetime(cotton_df['التاريخ']).dt.date <= end_date)
-                        ]
-                        st.dataframe(filtered_data, use_container_width=True)
+                        # عرض النسب المئوية إذا تم حسابها
+                        if calculate_percentage:
+                            st.subheader("📊 النسب المئوية مقابل قطن خام")
+                            
+                            # إنشاء مخطط للنسب المئوية
+                            if 'النسبة المئوية %' in stats_df.columns:
+                                # تصفية البيانات لإزالة قطن الخام من المخطط
+                                chart_data = stats_df[stats_df['نوع البالة'] != 'قطن خام']
+                                if not chart_data.empty:
+                                    # إنشاء مخطط شريطي للنسب المئوية
+                                    st.bar_chart(
+                                        chart_data.set_index('نوع البالة')['النسبة المئوية %']
+                                    )
+                            
+                            # عرض جدول مفصل للنسب
+                            percentage_df = stats_df[['نوع البالة', 'إجمالي الوزن', 'النسبة المئوية %']].copy()
+                            st.dataframe(percentage_df, use_container_width=True)
+                        
+                        # عرض البيانات الخام المصفاة
+                        st.subheader("📋 البيانات التفصيلية المصفاة")
+                        
+                        # تصفية البيانات الأصلية بنفس المعايير
+                        filtered_data = cotton_df.copy()
+                        filtered_data['التاريخ'] = pd.to_datetime(filtered_data['التاريخ']).dt.date
+                        mask = (filtered_data['التاريخ'] >= start_date) & (filtered_data['التاريخ'] <= end_date)
+                        
+                        if selected_shifts:
+                            mask = mask & (filtered_data['الوردية'].isin(selected_shifts))
+                        
+                        if selected_bale_types:
+                            mask = mask & (filtered_data['نوع البالة'].isin(selected_bale_types))
+                        
+                        detailed_data = filtered_data[mask]
+                        st.dataframe(detailed_data, use_container_width=True)
                         
                         # خيارات التصدير
+                        st.subheader("📥 تصدير البيانات")
+                        
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                             stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
-                            filtered_data.to_excel(writer, sheet_name='البيانات_التفصيلية', index=False)
+                            detailed_data.to_excel(writer, sheet_name='البيانات_التفصيلية', index=False)
+                            
+                            if calculate_percentage and 'النسبة المئوية %' in stats_df.columns:
+                                percentage_df.to_excel(writer, sheet_name='النسب_المئوية', index=False)
                         
                         st.download_button(
                             label="📥 تحميل التقرير كملف Excel",
@@ -723,7 +826,7 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                     else:
-                        st.warning("⚠ لا توجد بيانات في الفترة المحددة")
+                        st.warning("⚠ لا توجد بيانات تطابق معايير التصفية المحددة")
 
 # -------------------------------
 # Tab 3: إدارة المستخدمين (للمسؤول فقط)
@@ -840,7 +943,7 @@ if ((permissions["can_manage_users"] and len(tabs) > 3) or
         st.markdown("---")
         st.markdown("### معلومات الاتصال:")
         st.markdown("- 📧 البريد الإلكتروني: medotatch124@gmail.com")
-        st.markdown("- 📞 هاتف المصنع: 01274424062")
+        st.markdown("- 📞 هاتف :01274424062")
         st.markdown("- 🏢 الموقع: مصنع بيل يارن للغزل")
         st.markdown("---")
         st.markdown("### خدمات الدعم الفني:")
@@ -851,7 +954,7 @@ if ((permissions["can_manage_users"] and len(tabs) > 3) or
         st.markdown("---")
         st.markdown("### إصدار النظام:")
         st.markdown("- الإصدار: 1.0")
-        st.markdown("- آخر تحديث: 2025")
+        st.markdown("- آخر تحديث: 2024")
         st.markdown("- النظام: نظام إدارة مكبس القطن")
         
         st.info("ملاحظة: في حالة مواجهة أي مشاكل تقنية أو تحتاج إلى إضافة ميزات جديدة، يرجى التواصل مع قسم الدعم الفني.")
