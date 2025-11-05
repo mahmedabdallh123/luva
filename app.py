@@ -418,7 +418,7 @@ def get_current_shift():
 
 def get_supervisors():
     """قائمة المشرفين"""
-    return ["انسT.A", "عبدالحميدT.B", "محمود فتحيT.C", "احمد عبالعزيزT.D"]
+    return ["T.A", "T.B", "T.C", "T.D"]
 
 def get_bale_types():
     """أنواع البالات"""
