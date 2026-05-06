@@ -13,7 +13,6 @@ import numpy as np
 import tempfile
 import easyocr
 
-# محاولة استيراد PyGithub
 try:
     from github import Github
     GITHUB_AVAILABLE = True
@@ -115,17 +114,45 @@ def extract_data_from_image(image_file):
 # دوال المستخدمين والجلسات
 # -------------------------------
 def load_users():
+    """تحميل المستخدمين مع التأكد من وجود جميع الحقول"""
     if not os.path.exists(USERS_FILE):
-        default = {
+        default_users = {
             "admin": {"password": "1111", "role": "admin", "permissions": ["all"]},
             "user1": {"password": "12345", "role": "data_entry", "permissions": ["data_entry"]},
             "user2": {"password": "99999", "role": "viewer", "permissions": ["view_stats"]}
         }
         with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(default, f, indent=4)
-        return default
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+            json.dump(default_users, f, indent=4)
+        return default_users
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = json.load(f)
+        # تأكد من أن كل مستخدم له role و permissions
+        for username, data in users.items():
+            if "role" not in data:
+                if username == "admin":
+                    data["role"] = "admin"
+                    data["permissions"] = ["all"]
+                elif username == "user1":
+                    data["role"] = "data_entry"
+                    data["permissions"] = ["data_entry"]
+                else:
+                    data["role"] = "viewer"
+                    data["permissions"] = ["view_stats"]
+            if "permissions" not in data:
+                if data["role"] == "admin":
+                    data["permissions"] = ["all"]
+                elif data["role"] == "data_entry":
+                    data["permissions"] = ["data_entry"]
+                else:
+                    data["permissions"] = ["view_stats"]
+        return users
+    except Exception as e:
+        return {
+            "admin": {"password": "1111", "role": "admin", "permissions": ["all"]},
+            "user1": {"password": "12345", "role": "data_entry", "permissions": ["data_entry"]},
+            "user2": {"password": "99999", "role": "viewer", "permissions": ["view_stats"]}
+        }
 
 def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
@@ -197,7 +224,7 @@ def login_ui():
     active_count = len([u for u, v in state.items() if v.get("active")])
     st.caption(f"المستخدمون النشطون: {active_count}/{MAX_ACTIVE_USERS}")
     if st.button("تسجيل الدخول"):
-        if users[username]["password"] == password:
+        if username in users and users[username].get("password") == password:
             if username != "admin" and username in state and state[username].get("active"):
                 st.warning("مسجل بالفعل")
                 return False
@@ -208,11 +235,12 @@ def login_ui():
             save_state(state)
             st.session_state.logged_in = True
             st.session_state.username = username
-            st.session_state.user_role = users[username]["role"]
-            st.session_state.user_permissions = users[username]["permissions"]
+            # استخدام .get مع قيمة افتراضية لتجنب KeyError
+            st.session_state.user_role = users[username].get("role", "viewer")
+            st.session_state.user_permissions = users[username].get("permissions", ["view_stats"])
             st.rerun()
         else:
-            st.error("كلمة مرور خاطئة")
+            st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
     return st.session_state.logged_in
 
 # -------------------------------
@@ -324,7 +352,7 @@ elif perms["can_input"]:
     tab1 = st.tabs(["📥 إدخال البيانات"])[0]
 else:
     tab1 = st.tabs(["📊 الإحصائيات"])[0]
-# لإعادة توجيه التبويب في حالة وجود تبويبين
+
 if perms["can_input"] and perms["can_view_stats"]:
     input_tab = tab1
     stats_tab = tab2
@@ -337,7 +365,6 @@ else:
 if perms["can_input"]:
     with input_tab:
         st.header("إدخال بيانات البالات")
-        # OCR expander
         with st.expander("رفع صورة واستخراج البيانات"):
             img_file = st.file_uploader("اختر صورة", type=["png","jpg","jpeg"], key="ocr_img")
             if img_file:
@@ -353,21 +380,22 @@ if perms["can_input"]:
                         st.rerun()
                 else:
                     st.warning("لم يتم التعرف على النوع أو الوزن")
-        # نموذج الإدخال
         with st.form(key="data_form"):
             col1, col2 = st.columns(2)
             with col1:
                 sup = st.selectbox("المشرف", get_supervisors())
-                btype = st.selectbox("نوع البالة", get_bale_types(), 
-                                     index=get_bale_types().index(st.session_state.get("ocr_type", get_bale_types()[0])) 
-                                     if st.session_state.get("ocr_type") in get_bale_types() else 0)
+                default_type = st.session_state.get("ocr_type", get_bale_types()[0])
+                type_index = get_bale_types().index(default_type) if default_type in get_bale_types() else 0
+                btype = st.selectbox("نوع البالة", get_bale_types(), index=type_index)
                 auto_date = st.checkbox("تاريخ تلقائي", value=True)
                 if not auto_date:
-                    mdate = st.date_input("التاريخ", value=st.session_state.get("ocr_date", datetime.now().date()))
+                    default_date = st.session_state.get("ocr_date", datetime.now().date())
+                    mdate = st.date_input("التاريخ", value=default_date)
                 else:
                     mdate = None
             with col2:
-                weight = st.number_input("الوزن (كجم)", min_value=0.0, step=0.1, value=st.session_state.get("ocr_weight", 0.0))
+                default_weight = st.session_state.get("ocr_weight", 0.0)
+                weight = st.number_input("الوزن (كجم)", min_value=0.0, step=0.1, value=default_weight)
                 notes = st.text_input("ملاحظات")
                 auto_shift = st.checkbox("وردية تلقائية", value=True)
                 if not auto_shift:
