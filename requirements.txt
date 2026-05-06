@@ -3,3 +3,7 @@ pandas
 openpyxl
 requests
 PyGithub
+opencv-python-headless
+easyocr
+pillow
+numpy
