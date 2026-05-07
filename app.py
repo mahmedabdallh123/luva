@@ -41,9 +41,8 @@ APP_CONFIG = {
         "الثالثه": {"start": 0, "end": 8}
     },
     
-    # إعدادات الواجهة
-    "SHOW_TECH_SUPPORT_TO_ALL": False,
-    "CUSTOM_TABS": ["📥 إدخال البيانات", "📊 عرض الإحصائيات", "👥 إدارة المستخدمين", "📞 الدعم الفني"]
+    # إعدادات الواجهة (تم إزالة تبويبي الإدارة والدعم)
+    "CUSTOM_TABS": ["📥 إدخال البيانات", "📊 عرض الإحصائيات"]
 }
 
 # ===============================
@@ -93,7 +92,6 @@ def load_users():
             # التأكد من وجود جميع الحقول المطلوبة
             for username, user_data in users.items():
                 if "role" not in user_data:
-                    # تحديد الدور بناءً على اسم المستخدم إذا لم يكن موجوداً
                     if username == "admin":
                         user_data["role"] = "admin"
                         user_data["permissions"] = ["all"]
@@ -108,7 +106,6 @@ def load_users():
                         user_data["permissions"] = ["view_stats"]
                 
                 if "permissions" not in user_data:
-                    # تعيين الصلاحيات الافتراضية بناءً على الدور
                     if user_data["role"] == "admin":
                         user_data["permissions"] = ["all"]
                     elif user_data["role"] == "data_entry":
@@ -124,7 +121,6 @@ def load_users():
             return users
     except Exception as e:
         st.error(f"❌ خطأ في ملف users.json: {e}")
-        # إرجاع المستخدمين الافتراضيين في حالة الخطأ
         return {
             "admin": {
                 "password": "1111", 
@@ -328,7 +324,6 @@ def fetch_from_github_api():
 def load_cotton_data():
     """تحميل بيانات مكبس القطن"""
     if not os.path.exists(APP_CONFIG["LOCAL_FILE"]):
-        # إنشاء ملف جديد إذا لم يكن موجوداً
         create_new_cotton_file()
         return pd.DataFrame()
     
@@ -342,7 +337,6 @@ def load_cotton_data():
 def create_new_cotton_file():
     """إنشاء ملف بيانات جديد"""
     try:
-        # تعريف الأعمدة بناءً على الصورة المرفقة
         columns = [
             'التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 
             'وزن البالة', 'ملاحظات'
@@ -362,13 +356,11 @@ def save_cotton_data(df, commit_message="تحديث بيانات مكبس الق
     try:
         df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
         
-        # امسح الكاش
         try:
             st.cache_data.clear()
         except:
             pass
 
-        # حاول الرفع إلى GitHub
         token = st.secrets.get("github", {}).get("token", None)
         if token and GITHUB_AVAILABLE:
             try:
@@ -414,7 +406,7 @@ def get_current_shift():
     for shift_name, shift_times in APP_CONFIG["SHIFTS"].items():
         if shift_times["start"] <= current_hour < shift_times["end"]:
             return shift_name
-    return "ثالث"  # الوردية الثالثة من منتصف الليل إلى 8 صباحاً
+    return "الثالثه"  # الوردية الثالثة من منتصف الليل إلى 8 صباحاً
 
 def get_supervisors():
     """قائمة المشرفين"""
@@ -448,64 +440,50 @@ def generate_statistics(df, start_date, end_date):
     if df.empty:
         return pd.DataFrame()
     
-    # تحويل التاريخ لسلسلة نصية للمقارنة
     df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
     
-    # تصفية البيانات حسب الفترة
     mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
     filtered_df = df[mask]
     
     if filtered_df.empty:
         return pd.DataFrame()
     
-    # إنشاء جدول إحصائي
     stats = filtered_df.groupby('نوع البالة').agg({
         'وزن البالة': ['count', 'sum', 'mean'],
         'المشرف': 'first'
     }).round(2)
     
-    # إعادة تسمية الأعمدة
     stats.columns = ['عدد البالات', 'إجمالي الوزن', 'متوسط الوزن', 'المشرف']
     stats = stats.reset_index()
     
     return stats
 
 def get_user_permissions(user_role, user_permissions):
-    """الحصول على صلاحيات المستخدم بناءً على الدور والصلاحيات"""
+    """الحصول على صلاحيات المستخدم (بدون إدارة مستخدمين أو دعم فني)"""
     if "all" in user_permissions:
         return {
             "can_input": True,
-            "can_view_stats": True,
-            "can_manage_users": True,
-            "can_see_tech_support": True
+            "can_view_stats": True
         }
     elif "data_entry" in user_permissions:
         return {
             "can_input": True,
-            "can_view_stats": False,
-            "can_manage_users": False,
-            "can_see_tech_support": False
+            "can_view_stats": False
         }
     elif "view_stats" in user_permissions:
         return {
             "can_input": False,
-            "can_view_stats": True,
-            "can_manage_users": False,
-            "can_see_tech_support": False
+            "can_view_stats": True
         }
     else:
-        # صلاحيات افتراضية للعرض فقط
         return {
             "can_input": False,
-            "can_view_stats": True,
-            "can_manage_users": False,
-            "can_see_tech_support": False
+            "can_view_stats": True
         }
 
 # -------------------------------
 # 🖥 الواجهة الرئيسية
 # -------------------------------
-# إعداد الصفحة
 st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
 
 # شريط تسجيل الدخول
@@ -554,31 +532,29 @@ user_role = st.session_state.get("user_role", "viewer")
 user_permissions = st.session_state.get("user_permissions", ["view_stats"])
 permissions = get_user_permissions(user_role, user_permissions)
 
-# تحديد التبويبات بناءً على الصلاحيات
-if permissions["can_manage_users"]:  # admin
-    tabs = st.tabs(APP_CONFIG["CUSTOM_TABS"])
-elif permissions["can_input"]:  # data_entry user
-    tabs = st.tabs(["📥 إدخال البيانات"])
-elif permissions["can_view_stats"]:  # viewer user
-    tabs = st.tabs(["📊 عرض الإحصائيات"])
-else:
-    # إذا لم تكن هناك صلاحيات، نعرض تبويب الإحصائيات فقط
-    tabs = st.tabs(["📊 عرض الإحصائيات"])
+# بناء التبويبات بناءً على الصلاحيات (بدون إدارة مستخدمين أو دعم فني)
+tab_titles = []
+if permissions["can_input"]:
+    tab_titles.append("📥 إدخال البيانات")
+if permissions["can_view_stats"]:
+    tab_titles.append("📊 عرض الإحصائيات")
+
+if not tab_titles:
+    tab_titles = ["📊 عرض الإحصائيات"]  # افتراضي
+
+tabs = st.tabs(tab_titles)
 
 # -------------------------------
-# Tab 1: إدخال البيانات (للمستخدمين الذين لديهم صلاحية data_entry أو admin)
+# Tab 1: إدخال البيانات
 # -------------------------------
 if permissions["can_input"] and len(tabs) > 0:
     with tabs[0]:
         st.header("📥 إدخال بيانات البالات")
         
-        # معلومات الوردية الحالية
         current_shift = get_current_shift()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
         st.info(f"الوردية الحالية: {current_shift} | الوقت: {current_time}")
         
-        # نموذج إدخال البيانات
         with st.form("data_entry_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
@@ -598,7 +574,6 @@ if permissions["can_input"] and len(tabs) > 0:
                 else:
                     new_record, updated_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
                     
-                    # حفظ البيانات
                     if save_cotton_data(updated_df, f"إضافة بالة {bale_type} بواسطة {supervisor}"):
                         st.success(f"✅ تم حفظ بيانات البالة بنجاح!")
                         st.json({
@@ -611,15 +586,11 @@ if permissions["can_input"] and len(tabs) > 0:
                         st.rerun()
 
 # -------------------------------
-# Tab 2: عرض الإحصائيات (للمستخدمين الذين لديهم صلاحية view_stats أو admin)
+# Tab 2: عرض الإحصائيات
 # -------------------------------
-if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] else 0):
-    # تحديد الفهرس الصحيح للتبويب
-    stats_tab_index = 1 if permissions["can_input"] and permissions["can_manage_users"] else (
-        0 if not permissions["can_input"] else 1
-    )
-    
-    # التأكد من أن الفهرس ضمن النطاق الصحيح
+if permissions["can_view_stats"]:
+    # تحديد الفهرس الصحيح للتبويب (إذا كان هناك تبويب إدخال، فالإحصائيات في الفهرس 1)
+    stats_tab_index = 1 if permissions["can_input"] else 0
     if stats_tab_index < len(tabs):
         with tabs[stats_tab_index]:
             st.header("📊 عرض الإحصائيات")
@@ -627,7 +598,6 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
             if cotton_df.empty:
                 st.warning("⚠ لا توجد بيانات لعرضها")
             else:
-                # تحديد الفترة الزمنية
                 col1, col2 = st.columns(2)
                 with col1:
                     start_date = st.date_input("من تاريخ:", value=datetime.now().date() - timedelta(days=7))
@@ -638,16 +608,12 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
                     st.session_state["show_stats"] = True
                 
                 if st.session_state.get("show_stats", False):
-                    # توليد وعرض الإحصائيات
                     stats_df = generate_statistics(cotton_df, start_date, end_date)
                     
                     if not stats_df.empty:
                         st.subheader(f"📈 إحصائيات الفترة من {start_date} إلى {end_date}")
-                        
-                        # عرض جدول الإحصائيات
                         st.dataframe(stats_df, use_container_width=True)
                         
-                        # إجماليات عامة
                         total_bales = stats_df['عدد البالات'].sum()
                         total_weight = stats_df['إجمالي الوزن'].sum()
                         
@@ -660,7 +626,6 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
                             avg_weight = total_weight / total_bales if total_bales > 0 else 0
                             st.metric("📊 متوسط الوزن للبالة", f"{avg_weight:.1f} كجم")
                         
-                        # عرض البيانات الخام
                         st.subheader("📋 البيانات التفصيلية")
                         filtered_data = cotton_df[
                             (pd.to_datetime(cotton_df['التاريخ']).dt.date >= start_date) & 
@@ -668,7 +633,6 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
                         ]
                         st.dataframe(filtered_data, use_container_width=True)
                         
-                        # خيارات التصدير
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                             stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
@@ -682,134 +646,3 @@ if permissions["can_view_stats"] and len(tabs) > (0 if permissions["can_input"] 
                         )
                     else:
                         st.warning("⚠ لا توجد بيانات في الفترة المحددة")
-
-# -------------------------------
-# Tab 3: إدارة المستخدمين (للمسؤول فقط)
-# -------------------------------
-if permissions["can_manage_users"] and len(tabs) > 2:
-    with tabs[2]:
-        st.header("👥 إدارة المستخدمين")
-        
-        users = load_users()
-        
-        # عرض المستخدمين الحاليين
-        st.subheader("📋 المستخدمين الحاليين")
-        
-        if users:
-            user_data = []
-            for username, info in users.items():
-                user_data.append({
-                    "اسم المستخدم": username,
-                    "الدور": info.get("role", "user"),
-                    "الصلاحيات": ", ".join(info.get("permissions", [])),
-                    "تاريخ الإنشاء": info.get("created_at", "غير معروف")
-                })
-            
-            users_df = pd.DataFrame(user_data)
-            st.dataframe(users_df, use_container_width=True)
-        else:
-            st.info("لا يوجد مستخدمين مسجلين بعد.")
-        
-        # إضافة مستخدم جديد
-        st.subheader("➕ إضافة مستخدم جديد")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            new_username = st.text_input("اسم المستخدم الجديد:")
-        with col2:
-            new_password = st.text_input("كلمة المرور:", type="password")
-        with col3:
-            user_role = st.selectbox("الدور:", ["admin", "data_entry", "viewer"])
-        
-        if st.button("إضافة مستخدم", key="add_user"):
-            if not new_username.strip() or not new_password.strip():
-                st.warning("⚠ الرجاء إدخال اسم المستخدم وكلمة المرور.")
-            elif new_username in users:
-                st.warning("⚠ هذا المستخدم موجود بالفعل.")
-            else:
-                # تحديد الصلاحيات بناءً على الدور
-                if user_role == "admin":
-                    permissions_list = ["all"]
-                elif user_role == "data_entry":
-                    permissions_list = ["data_entry"]
-                else:  # viewer
-                    permissions_list = ["view_stats"]
-                
-                users[new_username] = {
-                    "password": new_password,
-                    "role": user_role,
-                    "permissions": permissions_list,
-                    "created_at": datetime.now().isoformat()
-                }
-                if save_users(users):
-                    st.success(f"✅ تم إضافة المستخدم '{new_username}' بنجاح.")
-                    st.rerun()
-                else:
-                    st.error("❌ حدث خطأ أثناء حفظ بيانات المستخدم.")
-        
-        # حذف مستخدم
-        st.subheader("🗑 حذف مستخدم")
-        
-        if len(users) > 1:
-            user_to_delete = st.selectbox(
-                "اختر مستخدم للحذف:",
-                [u for u in users.keys() if u != "admin"],
-                key="delete_user_select"
-            )
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                confirm_delete = st.checkbox("✅ تأكيد الحذف", key="confirm_user_delete")
-            with col2:
-                if st.button("حذف المستخدم", key="delete_user_btn"):
-                    if not confirm_delete:
-                        st.warning("⚠ يرجى تأكيد الحذف أولاً.")
-                    elif user_to_delete == "admin":
-                        st.error("❌ لا يمكن حذف المستخدم admin.")
-                    elif user_to_delete == st.session_state.get("username"):
-                        st.error("❌ لا يمكن حذف حسابك أثناء تسجيل الدخول.")
-                    else:
-                        if user_to_delete in users:
-                            del users[user_to_delete]
-                            if save_users(users):
-                                st.success(f"✅ تم حذف المستخدم '{user_to_delete}' بنجاح.")
-                                st.rerun()
-                            else:
-                                st.error("❌ حدث خطأ أثناء حفظ التغييرات.")
-
-# -------------------------------
-# Tab 4: الدعم الفني (للمسؤول فقط أو إذا كان مسموحاً للجميع)
-# -------------------------------
-tech_support_tab_index = 3 if permissions["can_manage_users"] else (
-    1 if permissions["can_input"] and not permissions["can_manage_users"] else 1
-)
-
-if ((permissions["can_manage_users"] and len(tabs) > 3) or 
-    (permissions["can_see_tech_support"] and len(tabs) > tech_support_tab_index)):
-    
-    with tabs[tech_support_tab_index]:
-        st.header("📞 الدعم الفني")
-        
-        st.markdown("## 🛠 معلومات التطوير والدعم")
-        st.markdown("تم تطوير هذا التطبيق بواسطة:")
-        st.markdown("### م. محمد عبدالله")
-        st.markdown("### رئيس قسم الكرد والمحطات")
-        st.markdown("### مصنع بيل يارن للغزل")
-        st.markdown("---")
-        st.markdown("### معلومات الاتصال:")
-        st.markdown("- 📧 البريد الإلكتروني: m.abdallah@bailyarn.com")
-        st.markdown("- 📞 هاتف المصنع: 01000000000")
-        st.markdown("- 🏢 الموقع: مصنع بيل يارن للغزل")
-        st.markdown("---")
-        st.markdown("### خدمات الدعم الفني:")
-        st.markdown("- 🔧 صيانة وتحديث النظام")
-        st.markdown("- 📊 تطوير تقارير إضافية")
-        st.markdown("- 🐛 إصلاح الأخطاء والمشكلات")
-        st.markdown("- 💡 استشارات فنية وتقنية")
-        st.markdown("---")
-        st.markdown("### إصدار النظام:")
-        st.markdown("- الإصدار: 1.0")
-        st.markdown("- آخر تحديث: 2024")
-        st.markdown("- النظام: نظام إدارة مكبس القطن")
-        
-        st.info("ملاحظة: في حالة مواجهة أي مشاكل تقنية أو تحتاج إلى إضافة ميزات جديدة، يرجى التواصل مع قسم الدعم الفني.")
