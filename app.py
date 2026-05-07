@@ -50,7 +50,7 @@ MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME']}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
 
 # -------------------------------
-# دوال OCR (بدون تغيير)
+# دوال OCR
 # -------------------------------
 @st.cache_resource
 def get_ocr_reader():
@@ -136,7 +136,6 @@ def parse_ocr_text(text):
         if m:
             data['production'] = m.group(1).strip()
             break
-    # تاريخ
     date_patterns = [
         r'(\d{4}[/-]\d{1,2}[/-]\d{1,2})',
         r'(\d{1,2}[/-]\d{1,2}[/-]\d{4})',
@@ -159,7 +158,6 @@ def parse_ocr_text(text):
                 break
             except:
                 pass
-    # وقت
     time_match = re.search(r'(\d{1,2}:\d{2})', text)
     if time_match:
         try:
@@ -169,13 +167,13 @@ def parse_ocr_text(text):
     return data
 
 # -------------------------------
-# دوال المستخدمين والجلسات (نفس السابق)
+# دوال المستخدمين والجلسات
 # -------------------------------
 def load_users():
     if not os.path.exists(USERS_FILE):
         default = {
             "admin": {"password": "1111", "role": "admin", "permissions": ["all"]},
-            "user1": {"password": "12345", "role": "data_entry", "permissions": ["data_entry"]},
+            "user1": {"password": "12345", "role": "data_entry", "permissions": ["data_entry", "view_stats"]},  # إضافة view_stats
             "user2": {"password": "99999", "role": "viewer", "permissions": ["view_stats"]}
         }
         with open(USERS_FILE, "w", encoding="utf-8") as f:
@@ -190,9 +188,12 @@ def load_users():
             if data["role"] == "admin":
                 data["permissions"] = ["all"]
             elif data["role"] == "data_entry":
-                data["permissions"] = ["data_entry"]
+                data["permissions"] = ["data_entry", "view_stats"]
             else:
                 data["permissions"] = ["view_stats"]
+        # تأكد من أن data_entry لديه view_stats أيضاً
+        if data["role"] == "data_entry" and "view_stats" not in data["permissions"]:
+            data["permissions"].append("view_stats")
     return users
 
 def save_users(users):
@@ -284,75 +285,45 @@ def login_ui():
     return st.session_state.logged_in
 
 # -------------------------------
-# دالة حفظ ملف Excel محلياً بأوراق متعددة
+# دوال حفظ الملفات والرفع إلى GitHub
 # -------------------------------
 def save_excel_locally(sheets_dict, filename):
-    """
-    حفظ قاموس من DataFrames إلى ملف Excel متعدد الأوراق.
-    sheets_dict: dict {sheet_name: DataFrame}
-    filename: اسم الملف (مثل "report.xlsx")
-    """
     try:
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
             for sheet_name, df in sheets_dict.items():
                 if not df.empty:
                     df.to_excel(writer, sheet_name=sheet_name, index=False)
                 else:
-                    # إنشاء ورقة فارغة مع رسالة
                     pd.DataFrame({'ملاحظة': ['لا توجد بيانات']}).to_excel(writer, sheet_name=sheet_name, index=False)
-        st.success(f"✅ تم حفظ الملف {filename} محلياً بنجاح")
         return True
     except Exception as e:
-        st.error(f"❌ خطأ في حفظ الملف محلياً: {e}")
+        st.error(f"خطأ في الحفظ المحلي: {e}")
         return False
 
-# -------------------------------
-# دالة رفع ملف إلى GitHub
-# -------------------------------
 def push_to_github(filename, commit_message="تحديث الملف"):
-    """
-    رفع ملف إلى GitHub باستخدام PyGithub أو API.
-    filename: اسم الملف المحلي المراد رفعه.
-    commit_message: رسالة التعديل.
-    """
     token = st.secrets.get("github", {}).get("token", None)
     if not token or not GITHUB_AVAILABLE:
         st.warning("⚠ لم يتم إعداد توكن GitHub أو المكتبة غير متوفرة. سيتم الحفظ محلياً فقط.")
         return False
-
     try:
         g = Github(token)
         repo = g.get_repo(APP_CONFIG["REPO_NAME"])
         with open(filename, "rb") as f:
             content = f.read()
-
         try:
-            # محاولة تحديث الملف الموجود
             contents = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
-            repo.update_file(
-                path=APP_CONFIG["FILE_PATH"],
-                message=commit_message,
-                content=content,
-                sha=contents.sha,
-                branch=APP_CONFIG["BRANCH"]
-            )
-            st.success(f"✅ تم رفع {filename} إلى GitHub (تحديث)")
-        except Exception:
-            # إنشاء ملف جديد
-            repo.create_file(
-                path=APP_CONFIG["FILE_PATH"],
-                message=commit_message,
-                content=content,
-                branch=APP_CONFIG["BRANCH"]
-            )
-            st.success(f"✅ تم إنشاء ملف {filename} على GitHub")
+            repo.update_file(APP_CONFIG["FILE_PATH"], commit_message, content, contents.sha, branch=APP_CONFIG["BRANCH"])
+            st.success("✅ تم رفع الملف إلى GitHub (تحديث)")
+        except:
+            repo.create_file(APP_CONFIG["FILE_PATH"], commit_message, content, branch=APP_CONFIG["BRANCH"])
+            st.success("✅ تم إنشاء الملف على GitHub")
         return True
     except Exception as e:
         st.error(f"❌ فشل الرفع إلى GitHub: {e}")
         return False
 
 # -------------------------------
-# دوال البيانات والإحصائيات (معدلة لاستخدام الدوال الجديدة)
+# دوال البيانات والإحصائيات
 # -------------------------------
 def fetch_from_github():
     try:
@@ -375,21 +346,13 @@ def load_cotton_data():
     return pd.read_excel(APP_CONFIG["LOCAL_FILE"])
 
 def save_cotton_data(df, commit_message="تحديث بيانات مكبس القطن"):
-    """
-    حفظ البيانات إلى ملف Excel محلياً ورفعها إلى GitHub.
-    تستخدم الدوال الجديدة save_excel_locally و push_to_github.
-    """
-    # حفظ الملف محلياً
-    success_local = save_excel_locally({APP_CONFIG["FILE_PATH"]: df}, APP_CONFIG["LOCAL_FILE"])
-    if not success_local:
+    # حفظ محلي
+    if not save_excel_locally({APP_CONFIG["FILE_PATH"]: df}, APP_CONFIG["LOCAL_FILE"]):
         return False
-
-    # مسح الكاش
     st.cache_data.clear()
-
-    # الرفع إلى GitHub
-    success_github = push_to_github(APP_CONFIG["LOCAL_FILE"], commit_message)
-    return success_local or success_github  # إذا نجح أحدهما على الأقل
+    # رفع إلى GitHub
+    push_to_github(APP_CONFIG["LOCAL_FILE"], commit_message)
+    return True
 
 def get_current_shift():
     hour = datetime.now().hour
@@ -446,14 +409,15 @@ def get_permissions(role, perms):
     if "all" in perms or role == "admin":
         return {"can_input": True, "can_view_stats": True}
     if "data_entry" in perms:
-        return {"can_input": True, "can_view_stats": False}
-    return {"can_input": False, "can_view_stats": True}
+        return {"can_input": True, "can_view_stats": "view_stats" in perms}
+    return {"can_input": False, "can_view_stats": True}  # viewer
 
 # -------------------------------
 # الواجهة الرئيسية
 # -------------------------------
 st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
 
+# الشريط الجانبي
 with st.sidebar:
     if not st.session_state.get("logged_in"):
         if not login_ui():
@@ -466,13 +430,16 @@ with st.sidebar:
             st.success(f"{st.session_state.username} | {st.session_state.user_role} | {mins:02d}:{secs:02d}")
         else:
             logout_action()
+        # عرض الصلاحيات الحالية للمستخدم
+        perms = get_permissions(st.session_state.user_role, st.session_state.user_permissions)
+        st.caption(f"📌 صلاحياتك: إدخال = {perms['can_input']} , إحصائيات = {perms['can_view_stats']}")
         if st.button("تسجيل الخروج"):
             logout_action()
         st.markdown("---")
-        if st.button("تحديث من GitHub"):
+        if st.button("🔄 تحديث من GitHub"):
             if fetch_from_github():
                 st.rerun()
-        if st.button("مسح الكاش"):
+        if st.button("🗑 مسح الكاش"):
             st.cache_data.clear()
             st.rerun()
 
@@ -482,17 +449,23 @@ if not st.session_state.get("logged_in"):
 cotton_df = load_cotton_data()
 perms = get_permissions(st.session_state.user_role, st.session_state.user_permissions)
 
+# بناء التبويبات حسب الصلاحيات
 if perms["can_input"] and perms["can_view_stats"]:
     tab1, tab2 = st.tabs(["📥 إدخال البيانات", "📊 الإحصائيات"])
     input_tab = tab1
     stats_tab = tab2
 elif perms["can_input"]:
     input_tab = st.tabs(["📥 إدخال البيانات"])[0]
-else:
+    stats_tab = None
+elif perms["can_view_stats"]:
     stats_tab = st.tabs(["📊 الإحصائيات"])[0]
+    input_tab = None
+else:
+    st.warning("ليس لديك صلاحية لعرض أي شيء، يرجى التواصل مع المسؤول.")
+    st.stop()
 
 # ========== تبويب إدخال البيانات ==========
-if perms["can_input"]:
+if input_tab is not None:
     with input_tab:
         st.header("📥 إدخال بيانات البالات")
         use_ocr = st.checkbox("🔍 تمكين الاستخراج التلقائي من الصور (OCR)", value=False)
@@ -523,7 +496,7 @@ if perms["can_input"]:
                         else:
                             st.warning("لم يتم استخراج بيانات. حاول رفع صورة أوضح.")
             else:
-                st.info("فعّل خيار OCR أعلاه")
+                st.info("فعّل خيار OCR أعلاه لاستخراج البيانات من الصور")
         with st.form(key="data_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -563,7 +536,7 @@ if perms["can_input"]:
                         st.rerun()
 
 # ========== تبويب الإحصائيات ==========
-if perms["can_view_stats"]:
+if stats_tab is not None:
     with stats_tab:
         st.header("📊 الإحصائيات")
         if cotton_df.empty:
@@ -576,31 +549,31 @@ if perms["can_view_stats"]:
             with col2:
                 shifts = st.multiselect("الورديات", list(APP_CONFIG["SHIFTS"].keys()), default=list(APP_CONFIG["SHIFTS"].keys()))
                 bale_types = st.multiselect("أنواع البالات", get_bale_types(), default=get_bale_types())
-            if st.button("عرض الإحصائيات"):
+            if st.button("عرض الإحصائيات", type="primary"):
                 stats_df = generate_statistics(cotton_df, start_date, end_date, shifts, bale_types)
                 if stats_df.empty:
-                    st.warning("لا توجد بيانات")
+                    st.warning("لا توجد بيانات في الفترة المحددة")
                 else:
                     st.dataframe(stats_df, use_container_width=True)
                     total_weight = stats_df['إجمالي الوزن'].sum()
                     total_count = stats_df['عدد البالات'].sum()
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("إجمالي البالات", f"{total_count}")
-                    col2.metric("إجمالي الوزن", f"{total_weight:.1f} كجم")
-                    col3.metric("متوسط الوزن", f"{total_weight/total_count:.1f}" if total_count else "0")
-                    # تصدير تقرير متعدد الأوراق باستخدام الدالة الجديدة
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("إجمالي البالات", f"{total_count}")
+                    c2.metric("إجمالي الوزن", f"{total_weight:.1f} كجم")
+                    c3.metric("متوسط الوزن", f"{total_weight/total_count:.1f}" if total_count else "0")
+                    # تصدير التقرير
+                    cot_df = cotton_df.copy()
+                    cot_df['التاريخ'] = pd.to_datetime(cot_df['التاريخ']).dt.date
+                    mask = (cot_df['التاريخ'] >= start_date) & (cot_df['التاريخ'] <= end_date)
+                    if shifts:
+                        mask &= cot_df['الوردية'].isin(shifts)
+                    if bale_types:
+                        mask &= cot_df['نوع البالة'].isin(bale_types)
+                    detailed = cot_df[mask]
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
-                        cot_df = cotton_df.copy()
-                        cot_df['التاريخ'] = pd.to_datetime(cot_df['التاريخ']).dt.date
-                        mask = (cot_df['التاريخ'] >= start_date) & (cot_df['التاريخ'] <= end_date)
-                        if shifts:
-                            mask &= cot_df['الوردية'].isin(shifts)
-                        if bale_types:
-                            mask &= cot_df['نوع البالة'].isin(bale_types)
-                        detailed = cot_df[mask]
                         detailed.to_excel(writer, sheet_name='التفاصيل', index=False)
-                    st.download_button("تحميل تقرير Excel", data=buffer.getvalue(),
+                    st.download_button("📥 تحميل تقرير Excel", data=buffer.getvalue(),
                                        file_name=f"تقرير_{start_date}_{end_date}.xlsx",
                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
