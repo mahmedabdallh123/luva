@@ -9,23 +9,25 @@ import re
 from datetime import datetime, timedelta
 from base64 import b64decode
 
-# محاولة استيراد PyGithub
+# GitHub
 try:
     from github import Github
     GITHUB_AVAILABLE = True
 except ImportError:
     GITHUB_AVAILABLE = False
 
-# محاولة استيراد Pytesseract (بديل خفيف)
+# OCR باستخدام pytesseract (أخف)
 try:
     import pytesseract
     from PIL import Image
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
-    st.warning("⚠ ميزة مسح الصور غير متاحة. قم بتثبيت Pytesseract و Tesseract OCR.")
+    st.warning("⚠ pytesseract غير مثبت، ميزة مسح الصور معطلة")
 
-# بقية الإعدادات كما هي (بدون تغيير)
+# ===============================
+# إعدادات التطبيق
+# ===============================
 APP_CONFIG = {
     "APP_TITLE": "نظام إدارة مكبس القطن",
     "APP_ICON": "🏭",
@@ -48,136 +50,172 @@ SESSION_DURATION = timedelta(minutes=APP_CONFIG["SESSION_DURATION_MINUTES"])
 MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/{APP_CONFIG['REPO_NAME'].split('/')[1]}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
 
-# ... (جميع دوال load_users, save_users, load_state, save_state, cleanup_sessions, remaining_time, logout_action, login_ui تبقى كما هي في كودك السابق، لم أقم بتغييرها) ...
-
 # -------------------------------
-# دوال OCR باستخدام Pytesseract
+# دوال المستخدمين والجلسات
 # -------------------------------
-def extract_text_from_image(image_bytes):
-    """استخراج النص من الصورة باستخدام Tesseract"""
-    if not OCR_AVAILABLE:
-        return ""
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        default_users = {
+            "admin": {"password": "1111", "role": "admin", "created_at": datetime.now().isoformat(), "permissions": ["all"]},
+            "user1": {"password": "12345", "role": "data_entry", "created_at": datetime.now().isoformat(), "permissions": ["data_entry"]},
+            "user2": {"password": "99999", "role": "viewer", "created_at": datetime.now().isoformat(), "permissions": ["view_stats"]}
+        }
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_users, f, indent=4, ensure_ascii=False)
+        return default_users
     try:
-        img = Image.open(io.BytesIO(image_bytes))
-        # تحسين الصورة: تحويل إلى تدرج رمادي
-        if img.mode != 'L':
-            img = img.convert('L')
-        # زيادة الوضوح
-        img = img.point(lambda x: 0 if x < 150 else 255, '1')
-        text = pytesseract.image_to_string(img, lang='ara+eng')
-        return text
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = json.load(f)
+            # التأكد من الحقول
+            for uname, udata in users.items():
+                if "role" not in udata:
+                    if uname == "admin":
+                        udata["role"] = "admin"
+                        udata["permissions"] = ["all"]
+                    elif uname == "user1":
+                        udata["role"] = "data_entry"
+                        udata["permissions"] = ["data_entry"]
+                    else:
+                        udata["role"] = "viewer"
+                        udata["permissions"] = ["view_stats"]
+                if "permissions" not in udata:
+                    if udata["role"] == "admin":
+                        udata["permissions"] = ["all"]
+                    elif udata["role"] == "data_entry":
+                        udata["permissions"] = ["data_entry"]
+                    else:
+                        udata["permissions"] = ["view_stats"]
+                if "created_at" not in udata:
+                    udata["created_at"] = datetime.now().isoformat()
+            return users
     except Exception as e:
-        st.error(f"⚠ خطأ في OCR: {e}")
-        return ""
+        st.error(f"خطأ في users.json: {e}")
+        return {
+            "admin": {"password": "1111", "role": "admin", "created_at": datetime.now().isoformat(), "permissions": ["all"]},
+            "user1": {"password": "12345", "role": "data_entry", "created_at": datetime.now().isoformat(), "permissions": ["data_entry"]},
+            "user2": {"password": "99999", "role": "viewer", "created_at": datetime.now().isoformat(), "permissions": ["view_stats"]}
+        }
 
-def parse_ocr_text(text):
-    """تحليل النص المستخرج"""
-    weight = None
-    bale_type = ""
-    notes_parts = []
-    
-    # البحث عن الوزن
-    weight_patterns = [
-        r'(\d+(?:\.\d+)?)\s*(?:kg|كجم|كغ)',
-        r'(?:وزن|الوزن)[:\s]*(\d+(?:\.\d+)?)'
-    ]
-    for pattern in weight_patterns:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m:
-            weight = float(m.group(1))
-            break
-    if weight is None:
-        numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', text)
-        for n in numbers:
-            val = float(n)
-            if 1 <= val <= 5000:
-                weight = val
-                break
-    
-    # البحث عن كود T.A (C1-0-0)
-    code_pattern = r'(T\.A\s*\([^)]+\))'
-    codes = re.findall(code_pattern, text, re.IGNORECASE)
-    if codes:
-        bale_type = codes[0]
-    
-    # تجميع الملاحظات
-    remaining = text
-    if weight is not None:
-        remaining = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', remaining)
-    for code in codes:
-        remaining = remaining.replace(code, '')
-    remaining = re.sub(r'[^\w\s\(\)\-\.:]', ' ', remaining)
-    remaining = re.sub(r'\s+', ' ', remaining).strip()
-    if remaining:
-        notes_parts.append(remaining)
-    
-    grade_match = re.search(r'(درجة|الدرجة)[:\s]*([^\n]+)', text, re.IGNORECASE)
-    if grade_match:
-        notes_parts.append(f"الدرجة: {grade_match.group(2).strip()}")
-    
-    notes = " | ".join(notes_parts) if notes_parts else ""
-    return weight, bale_type, notes
+def save_users(users):
+    try:
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(users, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        st.error(f"خطأ في حفظ users.json: {e}")
+        return False
 
-# -------------------------------
-# دوال النظام الأساسية (بدون تغيير)
-# -------------------------------
-def get_current_shift():
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+        return {}
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=4, ensure_ascii=False)
+
+def cleanup_sessions(state):
     now = datetime.now()
-    current_hour = now.hour
-    for shift_name, shift_times in APP_CONFIG["SHIFTS"].items():
-        if shift_times["start"] <= current_hour < shift_times["end"]:
-            return shift_name
-    return "الثالثه"
+    changed = False
+    for user, info in list(state.items()):
+        if info.get("active") and "login_time" in info:
+            try:
+                login_time = datetime.fromisoformat(info["login_time"])
+                if now - login_time > SESSION_DURATION:
+                    info["active"] = False
+                    info.pop("login_time", None)
+                    changed = True
+            except:
+                info["active"] = False
+                changed = True
+    if changed:
+        save_state(state)
+    return state
 
-def get_supervisors():
-    return ["انسT.A", "عبدالحميدT.B", "محمود فتحيT.C", "احمد عبالعزيزT.D"]
+def remaining_time(state, username):
+    if not username or username not in state:
+        return None
+    info = state.get(username)
+    if not info or not info.get("active"):
+        return None
+    try:
+        lt = datetime.fromisoformat(info["login_time"])
+        remaining = SESSION_DURATION - (datetime.now() - lt)
+        if remaining.total_seconds() <= 0:
+            return None
+        return remaining
+    except:
+        return None
 
-def get_bale_types():
-    return ["قماش", "تراب", "هبوه دست", "اسطبات تدویر", "برم", "برم انفاق", "بلاستيك",
-            "هبوه تنظيف", "انفاق", "شرق الغزل", "تمشيط غير مغلف", "تمشيط مغلف", "مكس", "كرد", "قطن خام", "ملح"]
+def logout_action():
+    state = load_state()
+    username = st.session_state.get("username")
+    if username and username in state:
+        state[username]["active"] = False
+        state[username].pop("login_time", None)
+        save_state(state)
+    for k in list(st.session_state.keys()):
+        st.session_state.pop(k, None)
+    st.rerun()
 
-def add_new_record(df, supervisor, bale_type, weight, notes=""):
-    now = datetime.now()
-    new_record = {
-        'التاريخ': now.date(),
-        'الوقت': now.time(),
-        'الوردية': get_current_shift(),
-        'المشرف': supervisor,
-        'نوع البالة': bale_type,
-        'وزن البالة': weight,
-        'ملاحظات': notes
-    }
-    new_df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
-    return new_record, new_df
+def login_ui():
+    users = load_users()
+    state = cleanup_sessions(load_state())
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
 
-def generate_statistics(df, start_date, end_date):
-    if df.empty:
-        return pd.DataFrame()
-    df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
-    mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
-    filtered_df = df[mask]
-    if filtered_df.empty:
-        return pd.DataFrame()
-    stats = filtered_df.groupby('نوع البالة').agg({
-        'وزن البالة': ['count', 'sum', 'mean'],
-        'المشرف': 'first'
-    }).round(2)
-    stats.columns = ['عدد البالات', 'إجمالي الوزن', 'متوسط الوزن', 'المشرف']
-    stats = stats.reset_index()
-    return stats
+    st.title(f"{APP_CONFIG['APP_ICON']} تسجيل الدخول - {APP_CONFIG['APP_TITLE']}")
+    username_input = st.selectbox("اختر المستخدم", list(users.keys()))
+    password = st.text_input("كلمة المرور", type="password")
+    active_users = [u for u, v in state.items() if v.get("active")]
+    active_count = len(active_users)
+    st.caption(f"المستخدمون النشطون: {active_count}/{MAX_ACTIVE_USERS}")
 
-def get_user_permissions(user_role, user_permissions):
-    if "all" in user_permissions:
-        return {"can_input": True, "can_view_stats": True}
-    elif "data_entry" in user_permissions:
-        return {"can_input": True, "can_view_stats": False}
-    elif "view_stats" in user_permissions:
-        return {"can_input": False, "can_view_stats": True}
+    if not st.session_state.logged_in:
+        if st.button("تسجيل الدخول"):
+            if username_input in users and users[username_input]["password"] == password:
+                if username_input == "admin":
+                    pass
+                elif username_input in active_users:
+                    st.warning("هذا المستخدم مسجل دخول بالفعل")
+                    return False
+                elif active_count >= MAX_ACTIVE_USERS:
+                    st.error("الحد الأقصى للمستخدمين المتصلين")
+                    return False
+                state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
+                save_state(state)
+                st.session_state.logged_in = True
+                st.session_state.username = username_input
+                st.session_state.user_role = users[username_input].get("role", "viewer")
+                st.session_state.user_permissions = users[username_input].get("permissions", ["view_stats"])
+                st.success(f"مرحباً {username_input}")
+                st.rerun()
+            else:
+                st.error("كلمة المرور غير صحيحة")
+        return False
     else:
-        return {"can_input": False, "can_view_stats": True}
+        username = st.session_state.username
+        role = st.session_state.user_role
+        st.success(f"مسجل كـ {username} ({role})")
+        rem = remaining_time(state, username)
+        if rem:
+            mins, secs = divmod(int(rem.total_seconds()), 60)
+            st.info(f"الوقت المتبقي: {mins:02d}:{secs:02d}")
+        else:
+            st.warning("انتهت الجلسة")
+            logout_action()
+        if st.button("تسجيل الخروج"):
+            logout_action()
+        return True
 
 # -------------------------------
-# دوال تحميل وحفظ البيانات من GitHub (نفسها)
+# دوال GitHub والبيانات
 # -------------------------------
 def fetch_from_github_requests():
     try:
@@ -188,7 +226,7 @@ def fetch_from_github_requests():
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"⚠ فشل التحديث من GitHub: {e}")
+        st.error(f"فشل التحديث: {e}")
         return False
 
 @st.cache_data(show_spinner=False)
@@ -200,20 +238,20 @@ def load_cotton_data():
         df = pd.read_excel(APP_CONFIG["LOCAL_FILE"])
         return df
     except Exception as e:
-        st.error(f"❌ خطأ في تحميل البيانات: {e}")
+        st.error(f"خطأ في تحميل البيانات: {e}")
         return pd.DataFrame()
 
 def create_new_cotton_file():
     try:
-        columns = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
-        df = pd.DataFrame(columns=columns)
+        cols = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
+        df = pd.DataFrame(columns=cols)
         df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
         return True
     except Exception as e:
-        st.error(f"❌ خطأ في إنشاء الملف: {e}")
+        st.error(f"خطأ في إنشاء الملف: {e}")
         return False
 
-def save_cotton_data(df, commit_message="تحديث بيانات مكبس القطن"):
+def save_cotton_data(df, commit_message="تحديث"):
     try:
         df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
         st.cache_data.clear()
@@ -226,42 +264,152 @@ def save_cotton_data(df, commit_message="تحديث بيانات مكبس الق
                     content = f.read()
                 try:
                     contents = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
-                    repo.update_file(path=APP_CONFIG["FILE_PATH"], message=commit_message, content=content, sha=contents.sha, branch=APP_CONFIG["BRANCH"])
-                    st.success("✅ تم الحفظ والرفع إلى GitHub")
+                    repo.update_file(APP_CONFIG["FILE_PATH"], commit_message, content, contents.sha, branch=APP_CONFIG["BRANCH"])
+                    st.success("تم الحفظ والرفع إلى GitHub")
                 except:
-                    repo.create_file(path=APP_CONFIG["FILE_PATH"], message=commit_message, content=content, branch=APP_CONFIG["BRANCH"])
-                    st.success("✅ تم إنشاء ملف جديد على GitHub")
+                    repo.create_file(APP_CONFIG["FILE_PATH"], commit_message, content, branch=APP_CONFIG["BRANCH"])
+                    st.success("تم إنشاء الملف على GitHub")
             except Exception as e:
-                st.warning(f"⚠ تم الحفظ محلياً فقط: {e}")
+                st.warning(f"تم الحفظ محلياً فقط: {e}")
         return True
     except Exception as e:
-        st.error(f"❌ خطأ في حفظ البيانات: {e}")
+        st.error(f"خطأ في الحفظ: {e}")
         return False
+
+# -------------------------------
+# دوال النظام
+# -------------------------------
+def get_current_shift():
+    now = datetime.now()
+    h = now.hour
+    for name, times in APP_CONFIG["SHIFTS"].items():
+        if times["start"] <= h < times["end"]:
+            return name
+    return "الثالثه"
+
+def get_supervisors():
+    return ["انسT.A", "عبدالحميدT.B", "محمود فتحيT.C", "احمد عبالعزيزT.D"]
+
+def get_bale_types():
+    return ["قماش", "تراب", "هبوه دست", "اسطبات تدویر", "برم", "برم انفاق", "بلاستيك",
+            "هبوه تنظيف", "انفاق", "شرق الغزل", "تمشيط غير مغلف", "تمشيط مغلف", "مكس", "كرد", "قطن خام", "ملح"]
+
+def add_new_record(df, supervisor, bale_type, weight, notes=""):
+    now = datetime.now()
+    new = {
+        'التاريخ': now.date(),
+        'الوقت': now.time(),
+        'الوردية': get_current_shift(),
+        'المشرف': supervisor,
+        'نوع البالة': bale_type,
+        'وزن البالة': weight,
+        'ملاحظات': notes
+    }
+    return new, pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+
+def generate_statistics(df, start_date, end_date):
+    if df.empty:
+        return pd.DataFrame()
+    df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
+    mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
+    fdf = df[mask]
+    if fdf.empty:
+        return pd.DataFrame()
+    stats = fdf.groupby('نوع البالة').agg({
+        'وزن البالة': ['count', 'sum', 'mean'],
+        'المشرف': 'first'
+    }).round(2)
+    stats.columns = ['عدد البالات', 'إجمالي الوزن', 'متوسط الوزن', 'المشرف']
+    return stats.reset_index()
+
+def get_user_permissions(role, perms):
+    if "all" in perms:
+        return {"can_input": True, "can_view_stats": True}
+    elif "data_entry" in perms:
+        return {"can_input": True, "can_view_stats": False}
+    elif "view_stats" in perms:
+        return {"can_input": False, "can_view_stats": True}
+    else:
+        return {"can_input": False, "can_view_stats": True}
+
+# -------------------------------
+# OCR دوال
+# -------------------------------
+def extract_text_from_image(image_bytes):
+    if not OCR_AVAILABLE:
+        return ""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != 'L':
+            img = img.convert('L')
+        img = img.point(lambda x: 0 if x < 150 else 255, '1')
+        text = pytesseract.image_to_string(img, lang='ara+eng')
+        return text
+    except Exception as e:
+        st.error(f"OCR خطأ: {e}")
+        return ""
+
+def parse_ocr_text(text):
+    weight = None
+    bale_type = ""
+    notes_parts = []
+    # وزن
+    patterns = [r'(\d+(?:\.\d+)?)\s*(?:kg|كجم|كغ)', r'(?:وزن|الوزن)[:\s]*(\d+(?:\.\d+)?)']
+    for p in patterns:
+        m = re.search(p, text, re.I)
+        if m:
+            weight = float(m.group(1))
+            break
+    if weight is None:
+        nums = re.findall(r'\b(\d+(?:\.\d+)?)\b', text)
+        for n in nums:
+            v = float(n)
+            if 1 <= v <= 5000:
+                weight = v
+                break
+    # كود T.A
+    codes = re.findall(r'(T\.A\s*\([^)]+\))', text, re.I)
+    if codes:
+        bale_type = codes[0]
+    # ملاحظات
+    remaining = text
+    if weight is not None:
+        remaining = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', remaining)
+    for c in codes:
+        remaining = remaining.replace(c, '')
+    remaining = re.sub(r'[^\w\s\(\)\-\.:]', ' ', remaining)
+    remaining = re.sub(r'\s+', ' ', remaining).strip()
+    if remaining:
+        notes_parts.append(remaining)
+    grade = re.search(r'(درجة|الدرجة)[:\s]*([^\n]+)', text, re.I)
+    if grade:
+        notes_parts.append(f"الدرجة: {grade.group(2).strip()}")
+    notes = " | ".join(notes_parts) if notes_parts else ""
+    return weight, bale_type, notes
 
 # -------------------------------
 # الواجهة الرئيسية
 # -------------------------------
 st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
 
-# شريط جانبي (نفسه)
+# السايدبار
 with st.sidebar:
-    st.header("👤 الجلسة")
+    st.header("الجلسة")
     if not st.session_state.get("logged_in"):
         if not login_ui():
             st.stop()
     else:
         state = cleanup_sessions(load_state())
-        username = st.session_state.username
-        user_role = st.session_state.user_role
-        rem = remaining_time(state, username)
+        user = st.session_state.username
+        role = st.session_state.user_role
+        rem = remaining_time(state, user)
         if rem:
-            mins, secs = divmod(int(rem.total_seconds()), 60)
-            st.success(f"👋 {username} | الدور: {user_role} | ⏳ {mins:02d}:{secs:02d}")
+            m, s = divmod(int(rem.total_seconds()), 60)
+            st.success(f"👋 {user} | {role} | ⏳ {m:02d}:{s:02d}")
         else:
             logout_action()
     st.markdown("---")
-    st.write("🔧 أدوات:")
-    if st.button("🔄 تحديث الملف من GitHub"):
+    if st.button("🔄 تحديث من GitHub"):
         if fetch_from_github_requests():
             st.rerun()
     if st.button("🗑 مسح الكاش"):
@@ -274,83 +422,89 @@ with st.sidebar:
 cotton_df = load_cotton_data()
 st.title(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
 
-permissions = get_user_permissions(st.session_state.get("user_role", "viewer"), st.session_state.get("user_permissions", ["view_stats"]))
+perms = get_user_permissions(
+    st.session_state.get("user_role", "viewer"),
+    st.session_state.get("user_permissions", ["view_stats"])
+)
 
-tab_titles = []
-if permissions["can_input"]:
-    tab_titles.append("📥 إدخال البيانات")
+# بناء التبويبات
+tabs_list = []
+if perms["can_input"]:
+    tabs_list.append("📥 إدخال البيانات")
     if OCR_AVAILABLE:
-        tab_titles.append("📸 مسح ضوئي من صورة")
+        tabs_list.append("📸 مسح ضوئي من صورة")
     else:
-        st.sidebar.info("🔍 لتفعيل مسح الصور: ثبّت Tesseract و pytesseract")
-if permissions["can_view_stats"]:
-    tab_titles.append("📊 عرض الإحصائيات")
+        st.sidebar.info("🔍 لتفعيل المسح: ثبّت pytesseract و Tesseract OCR")
+if perms["can_view_stats"]:
+    tabs_list.append("📊 عرض الإحصائيات")
 
-tabs = st.tabs(tab_titles)
+if not tabs_list:
+    tabs_list = ["📊 عرض الإحصائيات"]
+
+tabs = st.tabs(tabs_list)
 
 # تبويب الإدخال اليدوي
-if permissions["can_input"] and "📥 إدخال البيانات" in tab_titles:
-    idx = tab_titles.index("📥 إدخال البيانات")
+if perms["can_input"] and "📥 إدخال البيانات" in tabs_list:
+    idx = tabs_list.index("📥 إدخال البيانات")
     with tabs[idx]:
-        st.header("📥 إدخال بيانات البالات")
-        current_shift = get_current_shift()
-        st.info(f"الوردية الحالية: {current_shift} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        with st.form("manual_form"):
+        st.header("إدخال بيانات البالات")
+        st.info(f"الوردية الحالية: {get_current_shift()} - {datetime.now()}")
+        with st.form("manual"):
             col1, col2 = st.columns(2)
             with col1:
-                supervisor = st.selectbox("المشرف", get_supervisors())
-                bale_type = st.selectbox("نوع البالة", get_bale_types())
+                sup = st.selectbox("المشرف", get_supervisors())
+                btype = st.selectbox("نوع البالة", get_bale_types())
             with col2:
-                weight = st.number_input("الوزن (كجم)", min_value=0.0, step=0.1)
-                notes = st.text_input("ملاحظات")
+                w = st.number_input("الوزن (كجم)", min_value=0.0, step=0.1)
+                note = st.text_input("ملاحظات")
             if st.form_submit_button("حفظ"):
-                if weight > 0:
-                    _, new_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
+                if w > 0:
+                    _, new_df = add_new_record(cotton_df, sup, btype, w, note)
                     if save_cotton_data(new_df):
                         st.success("تم الحفظ")
                         st.rerun()
                 else:
-                    st.error("الوزن غير صحيح")
+                    st.error("أدخل وزناً صحيحاً")
 
-# تبويب مسح الصور
-if permissions["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة" in tab_titles:
-    idx = tab_titles.index("📸 مسح ضوئي من صورة")
+# تبويب OCR
+if perms["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة" in tabs_list:
+    idx = tabs_list.index("📸 مسح ضوئي من صورة")
     with tabs[idx]:
         st.header("رفع صورة واستخراج البيانات")
         uploaded = st.file_uploader("اختر صورة", type=["jpg","jpeg","png"])
         if uploaded:
             st.image(uploaded, use_column_width=True)
             with st.spinner("تحليل الصورة..."):
-                text = extract_text_from_image(uploaded.getvalue())
-            if text.strip():
+                extracted = extract_text_from_image(uploaded.getvalue())
+            if extracted.strip():
                 st.success("تم الاستخراج")
                 with st.expander("النص الخام"):
-                    st.text(text)
-                weight, bale_type, notes = parse_ocr_text(text)
-                with st.form("ocr_form"):
+                    st.text(extracted)
+                w, bt, nt = parse_ocr_text(extracted)
+                with st.form("ocr"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        supervisor = st.selectbox("المشرف", get_supervisors(), key="ocr_sup")
-                        bale_options = get_bale_types()
-                        default_idx = bale_options.index(bale_type) if bale_type in bale_options else 0
-                        bale_final = st.selectbox("نوع البالة", bale_options, index=default_idx)
+                        sup2 = st.selectbox("المشرف", get_supervisors(), key="ocr_sup")
+                        btypes = get_bale_types()
+                        def_idx = btypes.index(bt) if bt in btypes else 0
+                        bt2 = st.selectbox("نوع البالة", btypes, index=def_idx)
                     with col2:
-                        weight_final = st.number_input("الوزن", value=float(weight) if weight else 0.0, step=0.1)
-                        notes_final = st.text_area("ملاحظات", value=notes)
+                        w2 = st.number_input("الوزن", value=float(w) if w else 0.0, step=0.1)
+                        nt2 = st.text_area("ملاحظات", value=nt)
                     if st.form_submit_button("حفظ من الصورة"):
-                        if weight_final > 0:
-                            _, new_df = add_new_record(cotton_df, supervisor, bale_final, weight_final, notes_final)
+                        if w2 > 0:
+                            _, new_df = add_new_record(cotton_df, sup2, bt2, w2, nt2)
                             if save_cotton_data(new_df):
                                 st.success("تم الحفظ")
                                 st.rerun()
                         else:
                             st.error("أدخل وزناً صحيحاً")
             else:
-                st.error("لم يتم التعرف على نص")
+                st.error("لم يتم التعرف على نص في الصورة")
 
 # تبويب الإحصائيات
-if permissions["can_view_stats"] and "📊 عرض الإحصائيات" in tab_titles:
-    idx = tab_titles.index("📊 عرض الإحصائيات")
+if perms["can_view_stats"] and "📊 عرض الإحصائيات" in tabs_list:
+    idx = tabs_list.index("📊 عرض الإحصائيات")
     with tabs[idx]:
         st.header("الإحصائيات")
         if cotton_df.empty:
@@ -358,14 +512,14 @@ if permissions["can_view_stats"] and "📊 عرض الإحصائيات" in tab_t
         else:
             col1, col2 = st.columns(2)
             with col1:
-                start = st.date_input("من", datetime.now().date() - timedelta(days=7))
+                sd = st.date_input("من", datetime.now().date() - timedelta(days=7))
             with col2:
-                end = st.date_input("إلى", datetime.now().date())
-            if st.button("عرض"):
-                stats = generate_statistics(cotton_df, start, end)
+                ed = st.date_input("إلى", datetime.now().date())
+            if st.button("عرض الإحصائيات"):
+                stats = generate_statistics(cotton_df, sd, ed)
                 if not stats.empty:
                     st.dataframe(stats)
-                    total = stats['إجمالي الوزن'].sum()
-                    st.metric("إجمالي الوزن", f"{total:,.1f} كجم")
+                    total_w = stats['إجمالي الوزن'].sum()
+                    st.metric("إجمالي الوزن", f"{total_w:,.1f} كجم")
                 else:
                     st.warning("لا توجد بيانات في هذه الفترة")
