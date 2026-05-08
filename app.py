@@ -20,10 +20,12 @@ except ImportError:
 try:
     import pytesseract
     from PIL import Image
+    import cv2
+    import numpy as np
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
-    st.warning("⚠ pytesseract غير مثبت، ميزة مسح الصور معطلة")
+    st.warning("⚠ pytesseract أو opencv غير مثبت، ميزة مسح الصور معطلة")
 
 # ===============================
 # إعدادات التطبيق
@@ -51,7 +53,7 @@ MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/{APP_CONFIG['REPO_NAME'].split('/')[1]}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
 
 # -------------------------------
-# دوال المستخدمين والجلسات
+# دوال المستخدمين والجلسات (نفسها بدون تغيير)
 # -------------------------------
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -66,7 +68,6 @@ def load_users():
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             users = json.load(f)
-            # التأكد من الحقول
             for uname, udata in users.items():
                 if "role" not in udata:
                     if uname == "admin":
@@ -333,26 +334,72 @@ def get_user_permissions(role, perms):
         return {"can_input": False, "can_view_stats": True}
 
 # -------------------------------
-# OCR دوال
+# OCR دوال محسنة جدًا
 # -------------------------------
+def preprocess_image(img):
+    """
+    معالجة الصورة لتحسين OCR: تحويل إلى grayscale, thresholding, تكبير.
+    """
+    # تحويل إلى grayscale إذا لم تكن
+    if len(img.shape) == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img
+    
+    # تكبير الصورة 2x لتحسين النص الصغير
+    (h, w) = gray.shape
+    scaled = cv2.resize(gray, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
+    
+    # تطبيق Gaussian blur لتقليل الضوضاء
+    blurred = cv2.GaussianBlur(scaled, (3, 3), 0)
+    
+    # استخدام Adaptive Threshold (أفضل للإضاءة غير المتساوية)
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    
+    # إزالة الضوضاء الصغيرة
+    kernel = np.ones((1,1), np.uint8)
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    
+    return opening
+
 def extract_text_from_image(image_bytes):
+    """
+    استخراج النص من الصورة باستخدام عدة إعدادات PSM وأخذ أفضل نتيجة.
+    """
     if not OCR_AVAILABLE:
         return ""
     try:
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode != 'L':
-            img = img.convert('L')
-        img = img.point(lambda x: 0 if x < 150 else 255, '1')
-        text = pytesseract.image_to_string(img, lang='ara+eng')
-        return text
+        # قراءة الصورة باستخدام PIL ثم تحويلها إلى numpy
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        img = np.array(pil_img)
+        
+        # معالجة الصورة
+        processed = preprocess_image(img)
+        
+        # تجربة عدة أوضاع PSM
+        psm_modes = [6, 4, 3, 12]  # 6: block, 4: column, 3: auto, 12: sparse text
+        best_text = ""
+        for psm in psm_modes:
+            config = f'--psm {psm} -c preserve_interword_spaces=1'
+            text = pytesseract.image_to_string(processed, lang='ara+eng', config=config)
+            text = text.strip()
+            if len(text) > len(best_text):
+                best_text = text
+        
+        # تنظيف النص من الأحرف غير المرغوب فيها
+        best_text = re.sub(r'[^\w\s\u0600-\u06FF\.\-\(\)]', ' ', best_text)
+        best_text = re.sub(r'\s+', ' ', best_text).strip()
+        
+        return best_text
     except Exception as e:
-        st.error(f"OCR خطأ: {e}")
+        st.error(f"⚠️ خطأ في OCR: {e}")
         return ""
 
 def parse_ocr_text(text):
     weight = None
     bale_type = ""
     notes_parts = []
+    
     # وزن
     patterns = [r'(\d+(?:\.\d+)?)\s*(?:kg|كجم|كغ)', r'(?:وزن|الوزن)[:\s]*(\d+(?:\.\d+)?)']
     for p in patterns:
@@ -367,10 +414,12 @@ def parse_ocr_text(text):
             if 1 <= v <= 5000:
                 weight = v
                 break
+    
     # كود T.A
     codes = re.findall(r'(T\.A\s*\([^)]+\))', text, re.I)
     if codes:
         bale_type = codes[0]
+    
     # ملاحظات
     remaining = text
     if weight is not None:
@@ -434,7 +483,7 @@ if perms["can_input"]:
     if OCR_AVAILABLE:
         tabs_list.append("📸 مسح ضوئي من صورة")
     else:
-        st.sidebar.info("🔍 لتفعيل المسح: ثبّت pytesseract و Tesseract OCR")
+        st.sidebar.info("🔍 لتفعيل المسح: ثبّت pytesseract و Tesseract OCR و opencv")
 if perms["can_view_stats"]:
     tabs_list.append("📊 عرض الإحصائيات")
 
@@ -471,6 +520,7 @@ if perms["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة"
     idx = tabs_list.index("📸 مسح ضوئي من صورة")
     with tabs[idx]:
         st.header("رفع صورة واستخراج البيانات")
+        st.markdown("**نصائح لتحسين النتيجة:** استخدم صورة واضحة، إضاءة جيدة، نص مطبوع وليس بخط اليد.")
         uploaded = st.file_uploader("اختر صورة", type=["jpg","jpeg","png"])
         if uploaded:
             st.image(uploaded, use_column_width=True)
@@ -478,7 +528,7 @@ if perms["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة"
                 extracted = extract_text_from_image(uploaded.getvalue())
             if extracted.strip():
                 st.success("تم الاستخراج")
-                with st.expander("النص الخام"):
+                with st.expander("النص الخام المستخرج"):
                     st.text(extracted)
                 w, bt, nt = parse_ocr_text(extracted)
                 with st.form("ocr"):
@@ -490,7 +540,7 @@ if perms["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة"
                         bt2 = st.selectbox("نوع البالة", btypes, index=def_idx)
                     with col2:
                         w2 = st.number_input("الوزن", value=float(w) if w else 0.0, step=0.1)
-                        nt2 = st.text_area("ملاحظات", value=nt)
+                        nt2 = st.text_area("ملاحظات", value=nt, height=100)
                     if st.form_submit_button("حفظ من الصورة"):
                         if w2 > 0:
                             _, new_df = add_new_record(cotton_df, sup2, bt2, w2, nt2)
@@ -500,7 +550,7 @@ if perms["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة"
                         else:
                             st.error("أدخل وزناً صحيحاً")
             else:
-                st.error("لم يتم التعرف على نص في الصورة")
+                st.error("لم يتم التعرف على نص في الصورة. يرجى التأكد من جودة الصورة ووضوح النص.")
 
 # تبويب الإحصائيات
 if perms["can_view_stats"] and "📊 عرض الإحصائيات" in tabs_list:
