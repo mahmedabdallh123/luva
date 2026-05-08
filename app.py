@@ -16,7 +16,7 @@ try:
 except ImportError:
     GITHUB_AVAILABLE = False
 
-# OCR باستخدام pytesseract (أخف)
+# OCR باستخدام pytesseract مع opencv
 try:
     import pytesseract
     from PIL import Image
@@ -38,7 +38,7 @@ APP_CONFIG = {
     "FILE_PATH": "luva.xlsx",
     "LOCAL_FILE": "luva.xlsx",
     "MAX_ACTIVE_USERS": 5,
-    "SESSION_DURATION_MINUTES": 100,
+    "SESSION_DURATION_MINUTES": 11,
     "SHIFTS": {
         "الاولي": {"start": 8, "end": 16},
         "الثانيه": {"start": 16, "end": 24},
@@ -53,7 +53,7 @@ MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/{APP_CONFIG['REPO_NAME'].split('/')[1]}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
 
 # -------------------------------
-# دوال المستخدمين والجلسات (نفسها بدون تغيير)
+# دوال المستخدمين والجلسات (نفسها تماماً، لم يتغير شيء)
 # -------------------------------
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -237,6 +237,11 @@ def load_cotton_data():
         return pd.DataFrame()
     try:
         df = pd.read_excel(APP_CONFIG["LOCAL_FILE"])
+        # تأكد من وجود الأعمدة المطلوبة
+        required_cols = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = ""
         return df
     except Exception as e:
         st.error(f"خطأ في تحميل البيانات: {e}")
@@ -278,7 +283,7 @@ def save_cotton_data(df, commit_message="تحديث"):
         return False
 
 # -------------------------------
-# دوال النظام
+# دوال النظام الأساسية
 # -------------------------------
 def get_current_shift():
     now = datetime.now()
@@ -311,6 +316,7 @@ def add_new_record(df, supervisor, bale_type, weight, notes=""):
 def generate_statistics(df, start_date, end_date):
     if df.empty:
         return pd.DataFrame()
+    # تأكد من أن التاريخ بصيغة date
     df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
     mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
     fdf = df[mask]
@@ -334,107 +340,118 @@ def get_user_permissions(role, perms):
         return {"can_input": False, "can_view_stats": True}
 
 # -------------------------------
-# OCR دوال محسنة جدًا
+# دوال OCR المحسنة لاستخراج جدول
 # -------------------------------
-def preprocess_image(img):
+def preprocess_image_for_ocr(image_bytes):
     """
-    معالجة الصورة لتحسين OCR: تحويل إلى grayscale, thresholding, تكبير.
+    معالجة الصورة لتحسين التعرف على النصوص.
     """
-    # تحويل إلى grayscale إذا لم تكن
-    if len(img.shape) == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img
-    
-    # تكبير الصورة 2x لتحسين النص الصغير
-    (h, w) = gray.shape
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # تكبير الصورة
+    (h,w) = gray.shape
     scaled = cv2.resize(gray, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
-    
-    # تطبيق Gaussian blur لتقليل الضوضاء
-    blurred = cv2.GaussianBlur(scaled, (3, 3), 0)
-    
-    # استخدام Adaptive Threshold (أفضل للإضاءة غير المتساوية)
+    # إزالة الضوضاء
+    blurred = cv2.GaussianBlur(scaled, (3,3), 0)
+    # عتبة تكيفية
     thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    
-    # إزالة الضوضاء الصغيرة
-    kernel = np.ones((1,1), np.uint8)
-    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-    
-    return opening
+    return thresh
 
-def extract_text_from_image(image_bytes):
+def extract_table_from_image(image_bytes):
     """
-    استخراج النص من الصورة باستخدام عدة إعدادات PSM وأخذ أفضل نتيجة.
+    استخراج النص وتحويله إلى قائمة من الصفوف (كل صف: نوع، وزن)
     """
-    if not OCR_AVAILABLE:
-        return ""
-    try:
-        # قراءة الصورة باستخدام PIL ثم تحويلها إلى numpy
-        pil_img = Image.open(io.BytesIO(image_bytes))
-        img = np.array(pil_img)
-        
-        # معالجة الصورة
-        processed = preprocess_image(img)
-        
-        # تجربة عدة أوضاع PSM
-        psm_modes = [6, 4, 3, 12]  # 6: block, 4: column, 3: auto, 12: sparse text
-        best_text = ""
-        for psm in psm_modes:
-            config = f'--psm {psm} -c preserve_interword_spaces=1'
-            text = pytesseract.image_to_string(processed, lang='ara+eng', config=config)
-            text = text.strip()
-            if len(text) > len(best_text):
-                best_text = text
-        
-        # تنظيف النص من الأحرف غير المرغوب فيها
-        best_text = re.sub(r'[^\w\s\u0600-\u06FF\.\-\(\)]', ' ', best_text)
-        best_text = re.sub(r'\s+', ' ', best_text).strip()
-        
-        return best_text
-    except Exception as e:
-        st.error(f"⚠️ خطأ في OCR: {e}")
-        return ""
-
-def parse_ocr_text(text):
-    weight = None
-    bale_type = ""
-    notes_parts = []
+    processed = preprocess_image_for_ocr(image_bytes)
+    if processed is None:
+        return []
     
-    # وزن
-    patterns = [r'(\d+(?:\.\d+)?)\s*(?:kg|كجم|كغ)', r'(?:وزن|الوزن)[:\s]*(\d+(?:\.\d+)?)']
-    for p in patterns:
-        m = re.search(p, text, re.I)
-        if m:
-            weight = float(m.group(1))
-            break
-    if weight is None:
-        nums = re.findall(r'\b(\d+(?:\.\d+)?)\b', text)
-        for n in nums:
-            v = float(n)
-            if 1 <= v <= 5000:
-                weight = v
+    # استخدام PSM 6 (كتلة نصية) للحصول على النص بأكمله
+    config = '--psm 6 -c preserve_interword_spaces=1'
+    text = pytesseract.image_to_string(processed, lang='ara+eng', config=config)
+    
+    # تنظيف النص
+    text = re.sub(r'[^\w\s\u0600-\u06FF\.\-\(\)]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # تقسيم إلى سطور
+    lines = text.split('\n')
+    rows = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # محاولة استخراج (نوع، وزن) من السطر
+        # الأنواع قد تكون مثل: "قماش", "كرد", "T.A (60-0)", "T.A (-7-0)"
+        # الأوزان: أرقام (قد تكون متبوعة بـ "kg" أو "كجم")
+        
+        # أولاً: البحث عن رقم الوزن (قد يكون منفصلاً بمسافات)
+        numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', line)
+        weight = None
+        for num in numbers:
+            val = float(num)
+            if 0.5 <= val <= 5000:  # نطاق معقول للوزن
+                weight = val
                 break
+        
+        if weight is None:
+            continue  # لا يوجد وزن، نتخطى هذا السطر
+        
+        # إزالة الرقم من السطر للحصول على النوع
+        line_without_weight = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', line)
+        # إزالة أي وحدات مثل kg أو كجم
+        line_without_weight = re.sub(r'\s*(?:kg|كجم|كغ)\s*', ' ', line_without_weight, flags=re.I)
+        # تنظيف المسافات
+        bale_type = re.sub(r'\s+', ' ', line_without_weight).strip()
+        
+        # إذا بقي النوع فارغاً، نضع نص افتراضي
+        if not bale_type:
+            bale_type = "غير محدد"
+        
+        rows.append({
+            'نوع البالة': bale_type,
+            'وزن البالة': weight,
+            'التاريخ': datetime.now().date(),
+            'الوقت': datetime.now().time()
+        })
     
-    # كود T.A
-    codes = re.findall(r'(T\.A\s*\([^)]+\))', text, re.I)
-    if codes:
-        bale_type = codes[0]
+    # إذا لم نجد أي صفوف، نحاول تجربة PSM 4 (عمود)
+    if len(rows) == 0:
+        config = '--psm 4'
+        text = pytesseract.image_to_string(processed, lang='ara+eng', config=config)
+        text = re.sub(r'[^\w\s\u0600-\u06FF\.\-\(\)]', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # نفعل نفس الشيء
+            numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', line)
+            weight = None
+            for num in numbers:
+                val = float(num)
+                if 0.5 <= val <= 5000:
+                    weight = val
+                    break
+            if weight is None:
+                continue
+            line_without_weight = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', line)
+            line_without_weight = re.sub(r'\s*(?:kg|كجم|كغ)\s*', ' ', line_without_weight, flags=re.I)
+            bale_type = re.sub(r'\s+', ' ', line_without_weight).strip()
+            if not bale_type:
+                bale_type = "غير محدد"
+            rows.append({
+                'نوع البالة': bale_type,
+                'وزن البالة': weight,
+                'التاريخ': datetime.now().date(),
+                'الوقت': datetime.now().time()
+            })
     
-    # ملاحظات
-    remaining = text
-    if weight is not None:
-        remaining = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', remaining)
-    for c in codes:
-        remaining = remaining.replace(c, '')
-    remaining = re.sub(r'[^\w\s\(\)\-\.:]', ' ', remaining)
-    remaining = re.sub(r'\s+', ' ', remaining).strip()
-    if remaining:
-        notes_parts.append(remaining)
-    grade = re.search(r'(درجة|الدرجة)[:\s]*([^\n]+)', text, re.I)
-    if grade:
-        notes_parts.append(f"الدرجة: {grade.group(2).strip()}")
-    notes = " | ".join(notes_parts) if notes_parts else ""
-    return weight, bale_type, notes
+    return rows
 
 # -------------------------------
 # الواجهة الرئيسية
@@ -481,9 +498,9 @@ tabs_list = []
 if perms["can_input"]:
     tabs_list.append("📥 إدخال البيانات")
     if OCR_AVAILABLE:
-        tabs_list.append("📸 مسح ضوئي من صورة")
+        tabs_list.append("📸 استخراج جدول من صورة")
     else:
-        st.sidebar.info("🔍 لتفعيل المسح: ثبّت pytesseract و Tesseract OCR و opencv")
+        st.sidebar.info("🔍 لتفعيل مسح الجدول: ثبّت pytesseract و opencv")
 if perms["can_view_stats"]:
     tabs_list.append("📊 عرض الإحصائيات")
 
@@ -492,11 +509,11 @@ if not tabs_list:
 
 tabs = st.tabs(tabs_list)
 
-# تبويب الإدخال اليدوي
+# تبويب الإدخال اليدوي (كما هو)
 if perms["can_input"] and "📥 إدخال البيانات" in tabs_list:
     idx = tabs_list.index("📥 إدخال البيانات")
     with tabs[idx]:
-        st.header("إدخال بيانات البالات")
+        st.header("إدخال بيانات البالات يدوياً")
         st.info(f"الوردية الحالية: {get_current_shift()} - {datetime.now()}")
         with st.form("manual"):
             col1, col2 = st.columns(2)
@@ -515,44 +532,82 @@ if perms["can_input"] and "📥 إدخال البيانات" in tabs_list:
                 else:
                     st.error("أدخل وزناً صحيحاً")
 
-# تبويب OCR
-if perms["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة" in tabs_list:
-    idx = tabs_list.index("📸 مسح ضوئي من صورة")
+# تبويب استخراج الجدول من الصورة
+if perms["can_input"] and OCR_AVAILABLE and "📸 استخراج جدول من صورة" in tabs_list:
+    idx = tabs_list.index("📸 استخراج جدول من صورة")
     with tabs[idx]:
-        st.header("رفع صورة واستخراج البيانات")
-        st.markdown("**نصائح لتحسين النتيجة:** استخدم صورة واضحة، إضاءة جيدة، نص مطبوع وليس بخط اليد.")
+        st.header("رفع صورة تحتوي على جدول (نوع - وزن)")
+        st.markdown("""
+        **ملاحظة:**  
+        - يفضل أن تكون الصورة واضحة، والنصوص مطبوعة وليست بخط اليد.  
+        - سيقوم النظام باستخراج الأعمدة: **نوع البالة** و **وزن البالة** تلقائياً.  
+        - سيتم إضافة **التاريخ** و **الوقت** الحاليين لكل صف (يمكنك تعديلهما يدوياً في الجدول).  
+        - بعد ظهور الجدول، يمكنك إضافة صفوف أو تعديل القيم، ثم الضغط على **حفظ البيانات**.
+        """)
         uploaded = st.file_uploader("اختر صورة", type=["jpg","jpeg","png"])
         if uploaded:
             st.image(uploaded, use_column_width=True)
-            with st.spinner("تحليل الصورة..."):
-                extracted = extract_text_from_image(uploaded.getvalue())
-            if extracted.strip():
-                st.success("تم الاستخراج")
-                with st.expander("النص الخام المستخرج"):
-                    st.text(extracted)
-                w, bt, nt = parse_ocr_text(extracted)
-                with st.form("ocr"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        sup2 = st.selectbox("المشرف", get_supervisors(), key="ocr_sup")
-                        btypes = get_bale_types()
-                        def_idx = btypes.index(bt) if bt in btypes else 0
-                        bt2 = st.selectbox("نوع البالة", btypes, index=def_idx)
-                    with col2:
-                        w2 = st.number_input("الوزن", value=float(w) if w else 0.0, step=0.1)
-                        nt2 = st.text_area("ملاحظات", value=nt, height=100)
-                    if st.form_submit_button("حفظ من الصورة"):
-                        if w2 > 0:
-                            _, new_df = add_new_record(cotton_df, sup2, bt2, w2, nt2)
-                            if save_cotton_data(new_df):
-                                st.success("تم الحفظ")
-                                st.rerun()
+            with st.spinner("جاري استخراج الجدول من الصورة..."):
+                extracted_rows = extract_table_from_image(uploaded.getvalue())
+            if extracted_rows:
+                st.success(f"تم استخراج {len(extracted_rows)} صف")
+                # تحويل إلى DataFrame
+                df_extracted = pd.DataFrame(extracted_rows)
+                # إضافة عمود المشرف (افتراضي أول مشرف)
+                df_extracted['المشرف'] = get_supervisors()[0]
+                df_extracted['ملاحظات'] = ""
+                # إعادة ترتيب الأعمدة لتتناسب مع النظام
+                df_extracted = df_extracted[['نوع البالة', 'وزن البالة', 'التاريخ', 'الوقت', 'المشرف', 'ملاحظات']]
+                
+                # عرض محرر بيانات للتعديل
+                st.subheader("البيانات المستخرجة (قابل للتعديل)")
+                edited_df = st.data_editor(
+                    df_extracted,
+                    num_rows="dynamic",
+                    column_config={
+                        "نوع البالة": st.column_config.TextColumn("نوع البالة", required=True),
+                        "وزن البالة": st.column_config.NumberColumn("الوزن (كجم)", min_value=0.0, step=0.1, required=True),
+                        "التاريخ": st.column_config.DateColumn("التاريخ", required=True),
+                        "الوقت": st.column_config.TimeColumn("الوقت", required=True),
+                        "المشرف": st.column_config.SelectColumn("المشرف", options=get_supervisors(), required=True),
+                        "ملاحظات": st.column_config.TextColumn("ملاحظات"),
+                    },
+                    use_container_width=True
+                )
+                
+                if st.button("💾 حفظ البيانات المستخرجة في النظام"):
+                    if edited_df.empty:
+                        st.warning("لا توجد بيانات للحفظ")
+                    else:
+                        # التحقق من صحة البيانات
+                        invalid = edited_df[edited_df['وزن البالة'] <= 0]
+                        if not invalid.empty:
+                            st.error(f"يوجد {len(invalid)} صفاً وزنها غير صحيح (يجب أن يكون أكبر من 0)")
                         else:
-                            st.error("أدخل وزناً صحيحاً")
+                            # إضافة كل صف إلى DataFrame الرئيسي
+                            new_records_count = 0
+                            for _, row in edited_df.iterrows():
+                                # إنشاء سجل جديد بنفس دوال النظام (لضمان الوردية الحالية)
+                                now = datetime.now()
+                                new_record = {
+                                    'التاريخ': row['التاريخ'],
+                                    'الوقت': row['الوقت'],
+                                    'الوردية': get_current_shift(),
+                                    'المشرف': row['المشرف'],
+                                    'نوع البالة': row['نوع البالة'],
+                                    'وزن البالة': row['وزن البالة'],
+                                    'ملاحظات': row.get('ملاحظات', '')
+                                }
+                                cotton_df = pd.concat([cotton_df, pd.DataFrame([new_record])], ignore_index=True)
+                                new_records_count += 1
+                            
+                            if save_cotton_data(cotton_df, f"إضافة {new_records_count} سجل من الصورة"):
+                                st.success(f"تم حفظ {new_records_count} سجل بنجاح")
+                                st.rerun()
             else:
-                st.error("لم يتم التعرف على نص في الصورة. يرجى التأكد من جودة الصورة ووضوح النص.")
+                st.error("لم يتم التعرف على أي بيانات (نوع ووزن) في الصورة. حاول رفع صورة أوضح أو استخدم الإدخال اليدوي.")
 
-# تبويب الإحصائيات
+# تبويب الإحصائيات (كما هو)
 if perms["can_view_stats"] and "📊 عرض الإحصائيات" in tabs_list:
     idx = tabs_list.index("📊 عرض الإحصائيات")
     with tabs[idx]:
