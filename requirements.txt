@@ -1,4 +1,3 @@
-# requirements.txt (سطر واحد لكل مكتبة)
 streamlit
 pandas
 openpyxl
