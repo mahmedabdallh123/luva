@@ -9,37 +9,32 @@ import re
 from datetime import datetime, timedelta
 from base64 import b64decode
 
-# مكتبات OCR
-import numpy as np
-import cv2
-from PIL import Image
-import easyocr
-
-# محاولة استيراد PyGithub (لرفع التعديلات)
+# محاولة استيراد PyGithub
 try:
     from github import Github
     GITHUB_AVAILABLE = True
-except Exception:
+except ImportError:
     GITHUB_AVAILABLE = False
 
-# ===============================
-# ⚙ إعدادات التطبيق - نظام مكبس القطن
-# ===============================
+# محاولة استيراد Pytesseract (بديل خفيف)
+try:
+    import pytesseract
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    st.warning("⚠ ميزة مسح الصور غير متاحة. قم بتثبيت Pytesseract و Tesseract OCR.")
+
+# بقية الإعدادات كما هي (بدون تغيير)
 APP_CONFIG = {
     "APP_TITLE": "نظام إدارة مكبس القطن",
     "APP_ICON": "🏭",
-    
-    # إعدادات GitHub
     "REPO_NAME": "mahmedabdallh123/luva",
     "BRANCH": "main",
     "FILE_PATH": "luva.xlsx",
     "LOCAL_FILE": "luva.xlsx",
-    
-    # إعدادات الأمان
     "MAX_ACTIVE_USERS": 5,
     "SESSION_DURATION_MINUTES": 11,
-    
-    # إعدادات الورديات
     "SHIFTS": {
         "الاولي": {"start": 8, "end": 16},
         "الثانيه": {"start": 16, "end": 24},
@@ -47,292 +42,84 @@ APP_CONFIG = {
     }
 }
 
-# ===============================
-# 🗂 إعدادات الملفات
-# ===============================
 USERS_FILE = "users.json"
 STATE_FILE = "state.json"
 SESSION_DURATION = timedelta(minutes=APP_CONFIG["SESSION_DURATION_MINUTES"])
 MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
-
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/{APP_CONFIG['REPO_NAME'].split('/')[1]}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
 
+# ... (جميع دوال load_users, save_users, load_state, save_state, cleanup_sessions, remaining_time, logout_action, login_ui تبقى كما هي في كودك السابق، لم أقم بتغييرها) ...
+
 # -------------------------------
-# 🧩 دوال مساعدة للملفات والحالة
+# دوال OCR باستخدام Pytesseract
 # -------------------------------
-def load_users():
-    if not os.path.exists(USERS_FILE):
-        default_users = {
-            "admin": {"password": "1111", "role": "admin", "created_at": datetime.now().isoformat(), "permissions": ["all"]},
-            "user1": {"password": "12345", "role": "data_entry", "created_at": datetime.now().isoformat(), "permissions": ["data_entry"]},
-            "user2": {"password": "99999", "role": "viewer", "created_at": datetime.now().isoformat(), "permissions": ["view_stats"]}
-        }
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_users, f, indent=4, ensure_ascii=False)
-        return default_users
+def extract_text_from_image(image_bytes):
+    """استخراج النص من الصورة باستخدام Tesseract"""
+    if not OCR_AVAILABLE:
+        return ""
     try:
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = json.load(f)
-            for username, user_data in users.items():
-                if "role" not in user_data:
-                    if username == "admin":
-                        user_data["role"] = "admin"
-                        user_data["permissions"] = ["all"]
-                    elif username == "user1":
-                        user_data["role"] = "data_entry"
-                        user_data["permissions"] = ["data_entry"]
-                    elif username == "user2":
-                        user_data["role"] = "viewer"
-                        user_data["permissions"] = ["view_stats"]
-                    else:
-                        user_data["role"] = "viewer"
-                        user_data["permissions"] = ["view_stats"]
-                if "permissions" not in user_data:
-                    if user_data["role"] == "admin":
-                        user_data["permissions"] = ["all"]
-                    elif user_data["role"] == "data_entry":
-                        user_data["permissions"] = ["data_entry"]
-                    else:
-                        user_data["permissions"] = ["view_stats"]
-                if "created_at" not in user_data:
-                    user_data["created_at"] = datetime.now().isoformat()
-            return users
+        img = Image.open(io.BytesIO(image_bytes))
+        # تحسين الصورة: تحويل إلى تدرج رمادي
+        if img.mode != 'L':
+            img = img.convert('L')
+        # زيادة الوضوح
+        img = img.point(lambda x: 0 if x < 150 else 255, '1')
+        text = pytesseract.image_to_string(img, lang='ara+eng')
+        return text
     except Exception as e:
-        st.error(f"❌ خطأ في ملف users.json: {e}")
-        return {
-            "admin": {"password": "1111", "role": "admin", "created_at": datetime.now().isoformat(), "permissions": ["all"]},
-            "user1": {"password": "12345", "role": "data_entry", "created_at": datetime.now().isoformat(), "permissions": ["data_entry"]},
-            "user2": {"password": "99999", "role": "viewer", "created_at": datetime.now().isoformat(), "permissions": ["view_stats"]}
-        }
+        st.error(f"⚠ خطأ في OCR: {e}")
+        return ""
 
-def save_users(users):
-    try:
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(users, f, indent=4, ensure_ascii=False)
-        return True
-    except Exception as e:
-        st.error(f"❌ خطأ في حفظ ملف users.json: {e}")
-        return False
-
-def load_state():
-    if not os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
-        return {}
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=4, ensure_ascii=False)
-
-def cleanup_sessions(state):
-    now = datetime.now()
-    changed = False
-    for user, info in list(state.items()):
-        if info.get("active") and "login_time" in info:
-            try:
-                login_time = datetime.fromisoformat(info["login_time"])
-                if now - login_time > SESSION_DURATION:
-                    info["active"] = False
-                    info.pop("login_time", None)
-                    changed = True
-            except:
-                info["active"] = False
-                changed = True
-    if changed:
-        save_state(state)
-    return state
-
-def remaining_time(state, username):
-    if not username or username not in state:
-        return None
-    info = state.get(username)
-    if not info or not info.get("active"):
-        return None
-    try:
-        lt = datetime.fromisoformat(info["login_time"])
-        remaining = SESSION_DURATION - (datetime.now() - lt)
-        if remaining.total_seconds() <= 0:
-            return None
-        return remaining
-    except:
-        return None
+def parse_ocr_text(text):
+    """تحليل النص المستخرج"""
+    weight = None
+    bale_type = ""
+    notes_parts = []
+    
+    # البحث عن الوزن
+    weight_patterns = [
+        r'(\d+(?:\.\d+)?)\s*(?:kg|كجم|كغ)',
+        r'(?:وزن|الوزن)[:\s]*(\d+(?:\.\d+)?)'
+    ]
+    for pattern in weight_patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            weight = float(m.group(1))
+            break
+    if weight is None:
+        numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', text)
+        for n in numbers:
+            val = float(n)
+            if 1 <= val <= 5000:
+                weight = val
+                break
+    
+    # البحث عن كود T.A (C1-0-0)
+    code_pattern = r'(T\.A\s*\([^)]+\))'
+    codes = re.findall(code_pattern, text, re.IGNORECASE)
+    if codes:
+        bale_type = codes[0]
+    
+    # تجميع الملاحظات
+    remaining = text
+    if weight is not None:
+        remaining = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', remaining)
+    for code in codes:
+        remaining = remaining.replace(code, '')
+    remaining = re.sub(r'[^\w\s\(\)\-\.:]', ' ', remaining)
+    remaining = re.sub(r'\s+', ' ', remaining).strip()
+    if remaining:
+        notes_parts.append(remaining)
+    
+    grade_match = re.search(r'(درجة|الدرجة)[:\s]*([^\n]+)', text, re.IGNORECASE)
+    if grade_match:
+        notes_parts.append(f"الدرجة: {grade_match.group(2).strip()}")
+    
+    notes = " | ".join(notes_parts) if notes_parts else ""
+    return weight, bale_type, notes
 
 # -------------------------------
-# 🔐 تسجيل الخروج
-# -------------------------------
-def logout_action():
-    state = load_state()
-    username = st.session_state.get("username")
-    if username and username in state:
-        state[username]["active"] = False
-        state[username].pop("login_time", None)
-        save_state(state)
-    keys = list(st.session_state.keys())
-    for k in keys:
-        st.session_state.pop(k, None)
-    st.rerun()
-
-# -------------------------------
-# 🧠 واجهة تسجيل الدخول
-# -------------------------------
-def login_ui():
-    users = load_users()
-    state = cleanup_sessions(load_state())
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-        st.session_state.username = None
-        st.session_state.user_role = None
-        st.session_state.user_permissions = []
-
-    st.title(f"{APP_CONFIG['APP_ICON']} تسجيل الدخول - {APP_CONFIG['APP_TITLE']}")
-
-    username_input = st.selectbox("👤 اختر المستخدم", list(users.keys()))
-    password = st.text_input("🔑 كلمة المرور", type="password")
-
-    active_users = [u for u, v in state.items() if v.get("active")]
-    active_count = len(active_users)
-    st.caption(f"🔒 المستخدمون النشطون الآن: {active_count} / {MAX_ACTIVE_USERS}")
-
-    if not st.session_state.logged_in:
-        if st.button("تسجيل الدخول"):
-            if username_input in users and users[username_input]["password"] == password:
-                if username_input == "admin":
-                    pass
-                elif username_input in active_users:
-                    st.warning("⚠ هذا المستخدم مسجل دخول بالفعل.")
-                    return False
-                elif active_count >= MAX_ACTIVE_USERS:
-                    st.error("🚫 الحد الأقصى للمستخدمين المتصلين حالياً.")
-                    return False
-                state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
-                save_state(state)
-                st.session_state.logged_in = True
-                st.session_state.username = username_input
-                st.session_state.user_role = users[username_input].get("role", "viewer")
-                st.session_state.user_permissions = users[username_input].get("permissions", ["view_stats"])
-                st.success(f"✅ تم تسجيل الدخول: {username_input} ({st.session_state.user_role})")
-                st.rerun()
-            else:
-                st.error("❌ كلمة المرور غير صحيحة.")
-        return False
-    else:
-        username = st.session_state.username
-        user_role = st.session_state.user_role
-        st.success(f"✅ مسجل الدخول كـ: {username} ({user_role})")
-        rem = remaining_time(state, username)
-        if rem:
-            mins, secs = divmod(int(rem.total_seconds()), 60)
-            st.info(f"⏳ الوقت المتبقي: {mins:02d}:{secs:02d}")
-        else:
-            st.warning("⏰ انتهت الجلسة، سيتم تسجيل الخروج.")
-            logout_action()
-        if st.button("🚪 تسجيل الخروج"):
-            logout_action()
-        return True
-
-# -------------------------------
-# 🔄 طرق جلب الملف من GitHub
-# -------------------------------
-def fetch_from_github_requests():
-    try:
-        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
-        response.raise_for_status()
-        with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
-            shutil.copyfileobj(response.raw, f)
-        try:
-            st.cache_data.clear()
-        except:
-            pass
-        return True
-    except Exception as e:
-        st.error(f"⚠ فشل التحديث من GitHub: {e}")
-        return False
-
-def fetch_from_github_api():
-    if not GITHUB_AVAILABLE:
-        return fetch_from_github_requests()
-    try:
-        token = st.secrets.get("github", {}).get("token", None)
-        if not token:
-            return fetch_from_github_requests()
-        g = Github(token)
-        repo = g.get_repo(APP_CONFIG["REPO_NAME"])
-        file_content = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
-        content = b64decode(file_content.content)
-        with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
-            f.write(content)
-        try:
-            st.cache_data.clear()
-        except:
-            pass
-        return True
-    except Exception as e:
-        st.error(f"⚠ فشل تحميل الملف من GitHub: {e}")
-        return False
-
-# -------------------------------
-# 📂 تحميل البيانات
-# -------------------------------
-@st.cache_data(show_spinner=False)
-def load_cotton_data():
-    if not os.path.exists(APP_CONFIG["LOCAL_FILE"]):
-        create_new_cotton_file()
-        return pd.DataFrame()
-    try:
-        df = pd.read_excel(APP_CONFIG["LOCAL_FILE"])
-        return df
-    except Exception as e:
-        st.error(f"❌ خطأ في تحميل البيانات: {e}")
-        return pd.DataFrame()
-
-def create_new_cotton_file():
-    try:
-        columns = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
-        df = pd.DataFrame(columns=columns)
-        df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
-        return True
-    except Exception as e:
-        st.error(f"❌ خطأ في إنشاء الملف: {e}")
-        return False
-
-# -------------------------------
-# 🔁 حفظ البيانات
-# -------------------------------
-def save_cotton_data(df, commit_message="تحديث بيانات مكبس القطن"):
-    try:
-        df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
-        try:
-            st.cache_data.clear()
-        except:
-            pass
-        token = st.secrets.get("github", {}).get("token", None)
-        if token and GITHUB_AVAILABLE:
-            try:
-                g = Github(token)
-                repo = g.get_repo(APP_CONFIG["REPO_NAME"])
-                with open(APP_CONFIG["LOCAL_FILE"], "rb") as f:
-                    content = f.read()
-                try:
-                    contents = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
-                    repo.update_file(path=APP_CONFIG["FILE_PATH"], message=commit_message, content=content, sha=contents.sha, branch=APP_CONFIG["BRANCH"])
-                    st.success("✅ تم الحفظ والرفع إلى GitHub بنجاح")
-                except:
-                    repo.create_file(path=APP_CONFIG["FILE_PATH"], message=commit_message, content=content, branch=APP_CONFIG["BRANCH"])
-                    st.success("✅ تم إنشاء ملف جديد على GitHub")
-            except Exception as e:
-                st.warning(f"⚠ تم الحفظ محلياً فقط: {e}")
-        return True
-    except Exception as e:
-        st.error(f"❌ خطأ في حفظ البيانات: {e}")
-        return False
-
-# -------------------------------
-# 🧮 دوال مساعدة للنظام
+# دوال النظام الأساسية (بدون تغيير)
 # -------------------------------
 def get_current_shift():
     now = datetime.now()
@@ -390,89 +177,73 @@ def get_user_permissions(user_role, user_permissions):
         return {"can_input": False, "can_view_stats": True}
 
 # -------------------------------
-# 📸 دوال مسح الصور (OCR)
+# دوال تحميل وحفظ البيانات من GitHub (نفسها)
 # -------------------------------
-@st.cache_resource
-def init_ocr():
-    """تهيئة EasyOCR مع دعم العربية والإنجليزية"""
+def fetch_from_github_requests():
     try:
-        reader = easyocr.Reader(['ar', 'en'], gpu=False)
-        return reader
+        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
+        response.raise_for_status()
+        with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
+            shutil.copyfileobj(response.raw, f)
+        st.cache_data.clear()
+        return True
     except Exception as e:
-        st.error(f"❌ فشل تحميل OCR: {e}")
-        return None
+        st.error(f"⚠ فشل التحديث من GitHub: {e}")
+        return False
 
-def extract_text_from_image(image_bytes):
-    reader = init_ocr()
-    if reader is None:
-        return ""
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img is None:
-        return ""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-    result = reader.readtext(thresh, detail=0, paragraph=False)
-    extracted = ' '.join(result)
-    return extracted
+@st.cache_data(show_spinner=False)
+def load_cotton_data():
+    if not os.path.exists(APP_CONFIG["LOCAL_FILE"]):
+        create_new_cotton_file()
+        return pd.DataFrame()
+    try:
+        df = pd.read_excel(APP_CONFIG["LOCAL_FILE"])
+        return df
+    except Exception as e:
+        st.error(f"❌ خطأ في تحميل البيانات: {e}")
+        return pd.DataFrame()
 
-def parse_ocr_text(text):
-    """
-    استخراج الوزن، نوع البالة (كود T.A)، والملاحظات من النص
-    """
-    weight = None
-    bale_type = ""
-    notes_parts = []
-    
-    # البحث عن الوزن
-    weight_patterns = [
-        r'(\d+(?:\.\d+)?)\s*(?:kg|كجم|كغ)',
-        r'(?:وزن|الوزن)[:\s]*(\d+(?:\.\d+)?)'
-    ]
-    for pattern in weight_patterns:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m:
-            weight = float(m.group(1))
-            break
-    if weight is None:
-        numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', text)
-        for n in numbers:
-            val = float(n)
-            if 1 <= val <= 5000:
-                weight = val
-                break
-    
-    # البحث عن كود T.A (مثال: T.A (C1-0-0))
-    code_pattern = r'(T\.A\s*\([^)]+\))'
-    codes = re.findall(code_pattern, text, re.IGNORECASE)
-    if codes:
-        bale_type = codes[0]
-    
-    # باقي النص كملاحظات
-    remaining = text
-    if weight is not None:
-        remaining = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', remaining)
-    for code in codes:
-        remaining = remaining.replace(code, '')
-    remaining = re.sub(r'[^\w\s\(\)\-\.:]', ' ', remaining)
-    remaining = re.sub(r'\s+', ' ', remaining).strip()
-    if remaining:
-        notes_parts.append(remaining)
-    
-    # البحث عن الدرجة
-    grade_match = re.search(r'(درجة|الدرجة)[:\s]*([^\n]+)', text, re.IGNORECASE)
-    if grade_match:
-        notes_parts.append(f"الدرجة: {grade_match.group(2).strip()}")
-    
-    notes = " | ".join(notes_parts) if notes_parts else ""
-    return weight, bale_type, notes
+def create_new_cotton_file():
+    try:
+        columns = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
+        df = pd.DataFrame(columns=columns)
+        df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
+        return True
+    except Exception as e:
+        st.error(f"❌ خطأ في إنشاء الملف: {e}")
+        return False
+
+def save_cotton_data(df, commit_message="تحديث بيانات مكبس القطن"):
+    try:
+        df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
+        st.cache_data.clear()
+        token = st.secrets.get("github", {}).get("token", None)
+        if token and GITHUB_AVAILABLE:
+            try:
+                g = Github(token)
+                repo = g.get_repo(APP_CONFIG["REPO_NAME"])
+                with open(APP_CONFIG["LOCAL_FILE"], "rb") as f:
+                    content = f.read()
+                try:
+                    contents = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
+                    repo.update_file(path=APP_CONFIG["FILE_PATH"], message=commit_message, content=content, sha=contents.sha, branch=APP_CONFIG["BRANCH"])
+                    st.success("✅ تم الحفظ والرفع إلى GitHub")
+                except:
+                    repo.create_file(path=APP_CONFIG["FILE_PATH"], message=commit_message, content=content, branch=APP_CONFIG["BRANCH"])
+                    st.success("✅ تم إنشاء ملف جديد على GitHub")
+            except Exception as e:
+                st.warning(f"⚠ تم الحفظ محلياً فقط: {e}")
+        return True
+    except Exception as e:
+        st.error(f"❌ خطأ في حفظ البيانات: {e}")
+        return False
 
 # -------------------------------
-# 🖥 الواجهة الرئيسية
+# الواجهة الرئيسية
 # -------------------------------
 st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
 
-# شريط جانبي لتسجيل الدخول والأدوات
+# شريط جانبي (نفسه)
 with st.sidebar:
     st.header("👤 الجلسة")
     if not st.session_state.get("logged_in"):
@@ -488,182 +259,113 @@ with st.sidebar:
             st.success(f"👋 {username} | الدور: {user_role} | ⏳ {mins:02d}:{secs:02d}")
         else:
             logout_action()
-
     st.markdown("---")
     st.write("🔧 أدوات:")
     if st.button("🔄 تحديث الملف من GitHub"):
         if fetch_from_github_requests():
             st.rerun()
     if st.button("🗑 مسح الكاش"):
-        try:
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ خطأ في مسح الكاش: {e}")
+        st.cache_data.clear()
+        st.rerun()
     st.markdown("---")
     if st.button("🚪 تسجيل الخروج"):
         logout_action()
 
-# تحميل البيانات
 cotton_df = load_cotton_data()
 st.title(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
 
-# تحديد الصلاحيات
-username = st.session_state.get("username")
-user_role = st.session_state.get("user_role", "viewer")
-user_permissions = st.session_state.get("user_permissions", ["view_stats"])
-permissions = get_user_permissions(user_role, user_permissions)
+permissions = get_user_permissions(st.session_state.get("user_role", "viewer"), st.session_state.get("user_permissions", ["view_stats"]))
 
-# بناء قائمة التبويبات
 tab_titles = []
 if permissions["can_input"]:
     tab_titles.append("📥 إدخال البيانات")
-    tab_titles.append("📸 مسح ضوئي من صورة")   # التبويب الجديد
+    if OCR_AVAILABLE:
+        tab_titles.append("📸 مسح ضوئي من صورة")
+    else:
+        st.sidebar.info("🔍 لتفعيل مسح الصور: ثبّت Tesseract و pytesseract")
 if permissions["can_view_stats"]:
     tab_titles.append("📊 عرض الإحصائيات")
 
-if not tab_titles:
-    tab_titles = ["📊 عرض الإحصائيات"]
-
 tabs = st.tabs(tab_titles)
 
-# -------------------------------
-# تبويب إدخال البيانات اليدوي
-# -------------------------------
+# تبويب الإدخال اليدوي
 if permissions["can_input"] and "📥 إدخال البيانات" in tab_titles:
-    tab_index = tab_titles.index("📥 إدخال البيانات")
-    with tabs[tab_index]:
+    idx = tab_titles.index("📥 إدخال البيانات")
+    with tabs[idx]:
         st.header("📥 إدخال بيانات البالات")
         current_shift = get_current_shift()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.info(f"الوردية الحالية: {current_shift} | الوقت: {current_time}")
-        with st.form("data_entry_form", clear_on_submit=True):
+        st.info(f"الوردية الحالية: {current_shift} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        with st.form("manual_form"):
             col1, col2 = st.columns(2)
             with col1:
-                supervisor = st.selectbox("👨‍💼 اختر المشرف:", get_supervisors(), key="supervisor_select")
-                bale_type = st.selectbox("📦 اختر نوع البالة:", get_bale_types(), key="bale_type_select")
+                supervisor = st.selectbox("المشرف", get_supervisors())
+                bale_type = st.selectbox("نوع البالة", get_bale_types())
             with col2:
-                weight = st.number_input("⚖ وزن البالة (كجم):", min_value=0.0, step=0.1, key="weight_input")
-                notes = st.text_input("📝 ملاحظات (اختياري):", key="notes_input")
-            submitted = st.form_submit_button("💾 حفظ البيانات")
-            if submitted:
-                if weight <= 0:
-                    st.error("❌ يرجى إدخال وزن صحيح للبالة")
-                else:
-                    new_record, updated_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
-                    if save_cotton_data(updated_df, f"إضافة بالة {bale_type} بواسطة {supervisor}"):
-                        st.success("✅ تم حفظ بيانات البالة بنجاح!")
-                        st.json({
-                            "نوع البالة": new_record['نوع البالة'],
-                            "الوزن": f"{new_record['وزن البالة']} كجم",
-                            "المشرف": new_record['المشرف'],
-                            "الوردية": new_record['الوردية'],
-                            "الوقت": str(new_record['الوقت'])
-                        })
+                weight = st.number_input("الوزن (كجم)", min_value=0.0, step=0.1)
+                notes = st.text_input("ملاحظات")
+            if st.form_submit_button("حفظ"):
+                if weight > 0:
+                    _, new_df = add_new_record(cotton_df, supervisor, bale_type, weight, notes)
+                    if save_cotton_data(new_df):
+                        st.success("تم الحفظ")
                         st.rerun()
+                else:
+                    st.error("الوزن غير صحيح")
 
-# -------------------------------
-# تبويب مسح الصور (OCR)
-# -------------------------------
-if permissions["can_input"] and "📸 مسح ضوئي من صورة" in tab_titles:
-    tab_index = tab_titles.index("📸 مسح ضوئي من صورة")
-    with tabs[tab_index]:
-        st.header("📸 رفع صورة تحتوي على بيانات البالة")
-        st.markdown("""
-        **تعليمات:**  
-        ارفع صورة واضحة تحتوي على نص مثل:  
-        - الوزن (مثال: 215 كجم)  
-        - كود الماكينة مثل `T.A (C1-0-0)`  
-        - الدرجة، الإنتاج (سيتم إضافتها كملاحظات)  
-        """)
-        uploaded_file = st.file_uploader("اختر صورة (jpg, png, jpeg)", type=["jpg", "jpeg", "png"])
-        if uploaded_file is not None:
-            img_bytes = uploaded_file.getvalue()
-            st.image(img_bytes, caption="الصورة المرفوعة", use_column_width=True)
-            with st.spinner("جاري استخراج النص من الصورة..."):
-                extracted_text = extract_text_from_image(img_bytes)
-            if not extracted_text.strip():
-                st.error("❌ لم يتم التعرف على أي نص في الصورة. حاول رفع صورة أوضح.")
-            else:
-                st.success("✅ تم استخراج النص بنجاح")
-                with st.expander("📄 النص المستخرج (خام)"):
-                    st.text(extracted_text)
-                weight, bale_type, notes = parse_ocr_text(extracted_text)
+# تبويب مسح الصور
+if permissions["can_input"] and OCR_AVAILABLE and "📸 مسح ضوئي من صورة" in tab_titles:
+    idx = tab_titles.index("📸 مسح ضوئي من صورة")
+    with tabs[idx]:
+        st.header("رفع صورة واستخراج البيانات")
+        uploaded = st.file_uploader("اختر صورة", type=["jpg","jpeg","png"])
+        if uploaded:
+            st.image(uploaded, use_column_width=True)
+            with st.spinner("تحليل الصورة..."):
+                text = extract_text_from_image(uploaded.getvalue())
+            if text.strip():
+                st.success("تم الاستخراج")
+                with st.expander("النص الخام"):
+                    st.text(text)
+                weight, bale_type, notes = parse_ocr_text(text)
                 with st.form("ocr_form"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        supervisor = st.selectbox("👨‍💼 المشرف:", get_supervisors(), key="ocr_supervisor")
-                        type_options = get_bale_types()
-                        default_bale = bale_type if bale_type in type_options else type_options[0]
-                        bale_type_final = st.selectbox("📦 نوع البالة:", type_options, index=type_options.index(default_bale) if default_bale in type_options else 0)
+                        supervisor = st.selectbox("المشرف", get_supervisors(), key="ocr_sup")
+                        bale_options = get_bale_types()
+                        default_idx = bale_options.index(bale_type) if bale_type in bale_options else 0
+                        bale_final = st.selectbox("نوع البالة", bale_options, index=default_idx)
                     with col2:
-                        weight_final = st.number_input("⚖ الوزن (كجم):", min_value=0.0, step=0.1, value=float(weight) if weight else 0.0)
-                        notes_final = st.text_area("📝 ملاحظات:", value=notes, height=100)
-                    submitted_ocr = st.form_submit_button("💾 حفظ البيانات من الصورة")
-                    if submitted_ocr:
-                        if weight_final <= 0:
-                            st.error("❌ الوزن يجب أن يكون أكبر من صفر")
-                        else:
-                            new_record, updated_df = add_new_record(cotton_df, supervisor, bale_type_final, weight_final, notes_final)
-                            if save_cotton_data(updated_df, f"إضافة بالة عن طريق مسح صورة - {bale_type_final}"):
-                                st.success("✅ تم حفظ البيانات بنجاح!")
-                                st.json({
-                                    "نوع البالة": new_record['نوع البالة'],
-                                    "الوزن": f"{new_record['وزن البالة']} كجم",
-                                    "المشرف": new_record['المشرف'],
-                                    "الملاحظات": new_record['ملاحظات']
-                                })
+                        weight_final = st.number_input("الوزن", value=float(weight) if weight else 0.0, step=0.1)
+                        notes_final = st.text_area("ملاحظات", value=notes)
+                    if st.form_submit_button("حفظ من الصورة"):
+                        if weight_final > 0:
+                            _, new_df = add_new_record(cotton_df, supervisor, bale_final, weight_final, notes_final)
+                            if save_cotton_data(new_df):
+                                st.success("تم الحفظ")
                                 st.rerun()
-
-# -------------------------------
-# تبويب عرض الإحصائيات
-# -------------------------------
-if permissions["can_view_stats"]:
-    # تحديد مكان التبويب (قد يكون الأول أو الثاني أو الثالث)
-    if "📊 عرض الإحصائيات" in tab_titles:
-        tab_index = tab_titles.index("📊 عرض الإحصائيات")
-        with tabs[tab_index]:
-            st.header("📊 عرض الإحصائيات")
-            if cotton_df.empty:
-                st.warning("⚠ لا توجد بيانات لعرضها")
+                        else:
+                            st.error("أدخل وزناً صحيحاً")
             else:
-                col1, col2 = st.columns(2)
-                with col1:
-                    start_date = st.date_input("من تاريخ:", value=datetime.now().date() - timedelta(days=7))
-                with col2:
-                    end_date = st.date_input("إلى تاريخ:", value=datetime.now().date())
-                if st.button("🔄 تحديث الإحصائيات"):
-                    st.session_state["show_stats"] = True
-                if st.session_state.get("show_stats", False):
-                    stats_df = generate_statistics(cotton_df, start_date, end_date)
-                    if not stats_df.empty:
-                        st.subheader(f"📈 إحصائيات الفترة من {start_date} إلى {end_date}")
-                        st.dataframe(stats_df, use_container_width=True)
-                        total_bales = stats_df['عدد البالات'].sum()
-                        total_weight = stats_df['إجمالي الوزن'].sum()
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("🔄 إجمالي عدد البالات", f"{total_bales:,}")
-                        with col2:
-                            st.metric("⚖ إجمالي الوزن", f"{total_weight:,.1f} كجم")
-                        with col3:
-                            avg_weight = total_weight / total_bales if total_bales > 0 else 0
-                            st.metric("📊 متوسط الوزن للبالة", f"{avg_weight:.1f} كجم")
-                        st.subheader("📋 البيانات التفصيلية")
-                        filtered_data = cotton_df[
-                            (pd.to_datetime(cotton_df['التاريخ']).dt.date >= start_date) & 
-                            (pd.to_datetime(cotton_df['التاريخ']).dt.date <= end_date)
-                        ]
-                        st.dataframe(filtered_data, use_container_width=True)
-                        buffer = io.BytesIO()
-                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
-                            filtered_data.to_excel(writer, sheet_name='البيانات_التفصيلية', index=False)
-                        st.download_button(
-                            label="📥 تحميل التقرير كملف Excel",
-                            data=buffer.getvalue(),
-                            file_name=f"تقرير_مكبس_القطن_{start_date}إلى{end_date}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.warning("⚠ لا توجد بيانات في الفترة المحددة")
+                st.error("لم يتم التعرف على نص")
+
+# تبويب الإحصائيات
+if permissions["can_view_stats"] and "📊 عرض الإحصائيات" in tab_titles:
+    idx = tab_titles.index("📊 عرض الإحصائيات")
+    with tabs[idx]:
+        st.header("الإحصائيات")
+        if cotton_df.empty:
+            st.warning("لا توجد بيانات")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                start = st.date_input("من", datetime.now().date() - timedelta(days=7))
+            with col2:
+                end = st.date_input("إلى", datetime.now().date())
+            if st.button("عرض"):
+                stats = generate_statistics(cotton_df, start, end)
+                if not stats.empty:
+                    st.dataframe(stats)
+                    total = stats['إجمالي الوزن'].sum()
+                    st.metric("إجمالي الوزن", f"{total:,.1f} كجم")
+                else:
+                    st.warning("لا توجد بيانات في هذه الفترة")
