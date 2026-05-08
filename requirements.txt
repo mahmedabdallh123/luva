@@ -4,6 +4,6 @@ openpyxl
 requests
 PyGithub
 opencv-python-headless
-easyocr
+pytesseract
 pillow
 numpy
