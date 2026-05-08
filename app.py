@@ -38,7 +38,7 @@ APP_CONFIG = {
     "FILE_PATH": "luva.xlsx",
     "LOCAL_FILE": "luva.xlsx",
     "MAX_ACTIVE_USERS": 5,
-    "SESSION_DURATION_MINUTES": 11,
+    "SESSION_DURATION_MINUTES": 100,
     "SHIFTS": {
         "الاولي": {"start": 8, "end": 16},
         "الثانيه": {"start": 16, "end": 24},
