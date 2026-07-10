@@ -1,6 +1,27 @@
 {
-    "admin": {"password": "0000"},
-    "user1": {"password": "12345"},
-    "user2": {"password": "99999"}
+    "admin": {
+        "password": "0000",
+        "permissions": {
+            "all_sections": false
+        },
+        "sections_permissions": {},
+        "created_at": "2026-07-10T19:16:05.641394",
+        "role": "viewer"
+    },
+    "user1": {
+        "password": "12345",
+        "permissions": {
+            "all_sections": false
+        },
+        "sections_permissions": {},
+        "created_at": "2026-07-10T19:16:05.641411"
+    },
+    "user2": {
+        "password": "99999",
+        "permissions": {
+            "all_sections": false
+        },
+        "sections_permissions": {},
+        "created_at": "2026-07-10T19:16:05.641415"
+    }
 }
-
