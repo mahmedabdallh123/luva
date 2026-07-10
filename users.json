@@ -2,11 +2,11 @@
     "admin": {
         "password": "0000",
         "permissions": {
-            "all_sections": false
+            "all_sections": true
         },
         "sections_permissions": {},
         "created_at": "2026-07-10T19:16:05.641394",
-        "role": "viewer"
+        "role": "admin"
     },
     "user1": {
         "password": "12345",
