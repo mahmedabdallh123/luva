@@ -52,5 +52,14 @@
             "all_sections": false
         },
         "sections_permissions": {}
+    },
+    "Abdo": {
+        "password": "123456",
+        "role": "data_entry",
+        "created_at": "2026-07-10T19:36:56.424235",
+        "permissions": {
+            "all_sections": false
+        },
+        "sections_permissions": {}
     }
 }
