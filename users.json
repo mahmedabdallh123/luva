@@ -14,7 +14,8 @@
             "all_sections": false
         },
         "sections_permissions": {},
-        "created_at": "2026-07-10T19:16:05.641411"
+        "created_at": "2026-07-10T19:16:05.641411",
+        "role": "viewer"
     },
     "user2": {
         "password": "99999",
