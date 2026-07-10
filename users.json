@@ -25,5 +25,14 @@
         "sections_permissions": {},
         "created_at": "2026-07-10T19:16:05.641415",
         "role": "viewer"
+    },
+    "Fathy": {
+        "password": "1234",
+        "role": "data_entry",
+        "created_at": "2026-07-10T19:36:01.236123",
+        "permissions": {
+            "all_sections": false
+        },
+        "sections_permissions": {}
     }
 }
