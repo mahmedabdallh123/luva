@@ -36,8 +36,8 @@ APP_CONFIG = {
     "APP_ICON": "🏭",
     "REPO_NAME": "mahmedabdallh123/luva",
     "BRANCH": "main",
-    "FILE_PATH": "L9.xlsx",
-    "LOCAL_FILE": "L9.xlsx",
+    "FILE_PATH": "luva.xlsx",
+    "LOCAL_FILE": "luva.xlsx",
     "MAX_ACTIVE_USERS": 5,
     "SESSION_DURATION_MINUTES": 11,
     "SHIFTS": {
